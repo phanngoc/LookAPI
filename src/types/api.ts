@@ -1,9 +1,18 @@
-export interface APIEndpoint {
+export interface Project {
   id: string;
   name: string;
-  method: 'GET' | 'POST' | 'PUT' | 'DELETE';
   path: string;
-  service: 'dccard' | 'dcmain';
+  createdAt: number;
+  lastScanned: number | null;
+}
+
+export interface APIEndpoint {
+  id: string;
+  projectId?: string;
+  name: string;
+  method: 'GET' | 'POST' | 'PUT' | 'DELETE' | string;
+  path: string;
+  service: string;
   description: string;
   parameters: APIParameter[];
   category: string;

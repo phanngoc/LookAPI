@@ -1,5 +1,7 @@
 use crate::{database, http_client, scanner, types::*};
 use std::path::PathBuf;
+use tauri_plugin_dialog::DialogExt;
+use uuid::Uuid;
 
 #[tauri::command]
 pub async fn execute_http_request(request: ApiRequest) -> Result<ApiResponse, String> {
@@ -47,9 +49,68 @@ pub async fn export_response(filename: String, content: String) -> Result<String
     Ok(path.to_string_lossy().to_string())
 }
 
+// Project management commands
 #[tauri::command]
-pub async fn scan_project(project_path: String) -> Result<Vec<ApiEndpoint>, String> {
+pub async fn open_folder_dialog(app: tauri::AppHandle) -> Result<Option<String>, String> {
+    let (tx, rx) = std::sync::mpsc::channel();
+    
+    app.dialog()
+        .file()
+        .pick_folder(move |folder_path| {
+            let _ = tx.send(folder_path.map(|p| p.to_string()));
+        });
+    
+    rx.recv()
+        .map_err(|e| format!("Failed to receive folder path: {}", e))
+}
+
+#[tauri::command]
+pub async fn create_project(path: String) -> Result<Project, String> {
+    let path_buf = PathBuf::from(&path);
+    
+    // Extract project name from path
+    let name = path_buf
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("Unnamed Project")
+        .to_string();
+    
+    let project = Project {
+        id: Uuid::new_v4().to_string(),
+        name,
+        path,
+        created_at: chrono::Utc::now().timestamp(),
+        last_scanned: None,
+    };
+    
+    database::save_project(project.clone())
+        .map_err(|e| format!("Failed to save project: {}", e))?;
+    
+    Ok(project)
+}
+
+#[tauri::command]
+pub async fn get_all_projects() -> Result<Vec<Project>, String> {
+    database::get_all_projects()
+}
+
+#[tauri::command]
+pub async fn delete_project(project_id: String) -> Result<(), String> {
+    database::delete_project(project_id)
+}
+
+#[tauri::command]
+pub async fn get_endpoints_by_project(project_id: String) -> Result<Vec<ApiEndpoint>, String> {
+    database::get_endpoints_by_project(project_id)
+}
+
+#[tauri::command]
+pub async fn scan_project(project_id: String, project_path: String) -> Result<Vec<ApiEndpoint>, String> {
     let path = PathBuf::from(&project_path);
+    
+    // Clear existing endpoints for this project before scanning
+    database::clear_project_endpoints(&project_id)
+        .map_err(|e| format!("Failed to clear old endpoints: {}", e))?;
     
     // Perform scan
     let scanner = scanner::UnifiedScanner::new(path.clone());
@@ -68,8 +129,9 @@ pub async fn scan_project(project_path: String) -> Result<Vec<ApiEndpoint>, Stri
         let file_path = PathBuf::from(&scanned_endpoint.file_path);
         let service = service_detector.detect_service_from_path(&file_path);
         
-        // Generate ID from method and path
-        let id = format!("{}-{}", 
+        // Generate ID from project_id, method and path
+        let id = format!("{}-{}-{}", 
+            project_id,
             scanned_endpoint.method.to_uppercase(),
             scanned_endpoint.path.replace('/', "-").replace('{', "").replace('}', "")
         );
@@ -97,6 +159,7 @@ pub async fn scan_project(project_path: String) -> Result<Vec<ApiEndpoint>, Stri
 
         let api_endpoint = ApiEndpoint {
             id,
+            project_id: Some(project_id.clone()),
             name: format!("{} {}", scanned_endpoint.method, scanned_endpoint.path),
             method: scanned_endpoint.method,
             path: scanned_endpoint.path,
@@ -113,6 +176,10 @@ pub async fn scan_project(project_path: String) -> Result<Vec<ApiEndpoint>, Stri
 
         api_endpoints.push(api_endpoint);
     }
+    
+    // Update last_scanned timestamp
+    database::update_project_last_scanned(&project_id)
+        .map_err(|e| format!("Failed to update project timestamp: {}", e))?;
 
     Ok(api_endpoints)
 }

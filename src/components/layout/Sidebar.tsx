@@ -8,6 +8,8 @@ import {
   Play,
   FileJson,
   Layers,
+  FolderCode,
+  SearchX,
 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -21,6 +23,7 @@ import {
 import { MethodBadge } from '@/components/shared/MethodBadge';
 import { useEndpoints } from '@/hooks/useEndpoints';
 import { useTestSuites } from '@/hooks/useTestSuites';
+import { useProject } from '@/contexts/ProjectContext';
 import { APIEndpoint, TestSuite } from '@/types/api';
 import { cn } from '@/lib/utils';
 
@@ -37,7 +40,8 @@ export function Sidebar({
   onSelectDatabase,
   selectedEndpointId,
 }: SidebarProps) {
-  const { endpoints, isLoading: endpointsLoading } = useEndpoints();
+  const { currentProject, isScanning } = useProject();
+  const { endpoints, isLoading: endpointsLoading } = useEndpoints(currentProject?.id);
   const { testSuites, isLoading: suitesLoading } = useTestSuites();
   const [searchQuery, setSearchQuery] = useState('');
   const [expandedCategories, setExpandedCategories] = useState<Set<string>>(
@@ -89,7 +93,7 @@ export function Sidebar({
     setExpandedCategories(newExpanded);
   };
 
-  if (endpointsLoading || suitesLoading) {
+  if (endpointsLoading || suitesLoading || isScanning) {
     return (
       <div className="w-72 border-r border-slate-200 bg-white flex flex-col">
         <div className="p-4">
@@ -97,6 +101,56 @@ export function Sidebar({
             <div className="h-9 bg-slate-100 rounded-lg" />
             <div className="h-6 bg-slate-100 rounded w-3/4" />
             <div className="h-6 bg-slate-100 rounded w-1/2" />
+          </div>
+          {isScanning && (
+            <div className="mt-4 text-center text-sm text-slate-500">
+              Scanning project...
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  // No project selected state
+  if (!currentProject) {
+    return (
+      <div className="w-72 border-r border-slate-200 bg-gradient-sidebar flex flex-col h-full">
+        <div className="flex-1 flex items-center justify-center p-4">
+          <div className="text-center">
+            <FolderCode className="w-12 h-12 mx-auto text-slate-300 mb-3" />
+            <h3 className="text-sm font-medium text-slate-700 mb-1">No Project Selected</h3>
+            <p className="text-xs text-slate-500">
+              Select a project from the header to view API endpoints
+            </p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Project selected but no endpoints
+  if (endpoints.length === 0) {
+    return (
+      <div className="w-72 border-r border-slate-200 bg-gradient-sidebar flex flex-col h-full">
+        <div className="p-3 border-b border-slate-200">
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-slate-400 w-4 h-4" />
+            <Input
+              type="text"
+              placeholder="Search endpoints..."
+              disabled
+              className="pl-9 h-9 bg-slate-50 border-slate-200"
+            />
+          </div>
+        </div>
+        <div className="flex-1 flex items-center justify-center p-4">
+          <div className="text-center">
+            <SearchX className="w-12 h-12 mx-auto text-slate-300 mb-3" />
+            <h3 className="text-sm font-medium text-slate-700 mb-1">No Endpoints Found</h3>
+            <p className="text-xs text-slate-500 mb-3">
+              Click "Scan APIs" in the header to scan this project for API endpoints
+            </p>
           </div>
         </div>
       </div>

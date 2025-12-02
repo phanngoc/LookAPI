@@ -1,4 +1,4 @@
-use crate::types::{ApiEndpoint, TestSuite, QueryResult};
+use crate::types::{ApiEndpoint, TestSuite, QueryResult, Project};
 use rusqlite::{Connection, Result};
 use std::path::PathBuf;
 
@@ -13,9 +13,23 @@ pub fn get_db_path() -> PathBuf {
 pub fn init_database() -> Result<()> {
     let conn = Connection::open(get_db_path())?;
 
+    // Projects table
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS projects (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            path TEXT NOT NULL UNIQUE,
+            created_at INTEGER NOT NULL,
+            last_scanned INTEGER
+        )",
+        [],
+    )?;
+
+    // Endpoints table with project_id
     conn.execute(
         "CREATE TABLE IF NOT EXISTS endpoints (
             id TEXT PRIMARY KEY,
+            project_id TEXT,
             name TEXT NOT NULL,
             method TEXT NOT NULL,
             path TEXT NOT NULL,
@@ -25,10 +39,14 @@ pub fn init_database() -> Result<()> {
             parameters TEXT NOT NULL DEFAULT '[]',
             explanation TEXT,
             created_at INTEGER,
-            updated_at INTEGER
+            updated_at INTEGER,
+            FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
         )",
         [],
     )?;
+
+    // Add project_id column if it doesn't exist (migration for existing databases)
+    let _ = conn.execute("ALTER TABLE endpoints ADD COLUMN project_id TEXT", []);
 
     conn.execute(
         "CREATE TABLE IF NOT EXISTS test_suites (
@@ -50,24 +68,25 @@ pub fn get_all_endpoints() -> Result<Vec<ApiEndpoint>, String> {
     let conn = Connection::open(get_db_path())
         .map_err(|e| format!("DB connection error: {}", e))?;
 
-    let mut stmt = conn.prepare("SELECT id, name, method, path, service, description, category, parameters FROM endpoints")
+    let mut stmt = conn.prepare("SELECT id, project_id, name, method, path, service, description, category, parameters, explanation FROM endpoints")
         .map_err(|e| format!("Prepare error: {}", e))?;
 
     let endpoints = stmt.query_map([], |row| {
-        let params_json: String = row.get(7)?;
+        let params_json: String = row.get(8)?;
         let parameters: Vec<crate::types::ApiParameter> = serde_json::from_str(&params_json)
             .unwrap_or_default();
 
         Ok(ApiEndpoint {
             id: row.get(0)?,
-            name: row.get(1)?,
-            method: row.get(2)?,
-            path: row.get(3)?,
-            service: row.get(4)?,
-            description: row.get(5)?,
-            category: row.get(6)?,
+            project_id: row.get(1)?,
+            name: row.get(2)?,
+            method: row.get(3)?,
+            path: row.get(4)?,
+            service: row.get(5)?,
+            description: row.get(6)?,
+            category: row.get(7)?,
             parameters,
-            explanation: None,
+            explanation: row.get(9)?,
         })
     })
     .map_err(|e| format!("Query error: {}", e))?
@@ -88,10 +107,11 @@ pub fn save_endpoint(endpoint: ApiEndpoint) -> Result<(), String> {
 
     conn.execute(
         "INSERT OR REPLACE INTO endpoints
-        (id, name, method, path, service, description, category, parameters, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (id, project_id, name, method, path, service, description, category, parameters, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         rusqlite::params![
             endpoint.id,
+            endpoint.project_id,
             endpoint.name,
             endpoint.method,
             endpoint.path,
@@ -103,6 +123,134 @@ pub fn save_endpoint(endpoint: ApiEndpoint) -> Result<(), String> {
         ],
     )
     .map_err(|e| format!("Insert error: {}", e))?;
+
+    Ok(())
+}
+
+// Project management functions
+pub fn save_project(project: Project) -> Result<(), String> {
+    let conn = Connection::open(get_db_path())
+        .map_err(|e| format!("DB error: {}", e))?;
+
+    conn.execute(
+        "INSERT OR REPLACE INTO projects (id, name, path, created_at, last_scanned)
+        VALUES (?, ?, ?, ?, ?)",
+        rusqlite::params![
+            project.id,
+            project.name,
+            project.path,
+            project.created_at,
+            project.last_scanned
+        ],
+    )
+    .map_err(|e| format!("Insert error: {}", e))?;
+
+    Ok(())
+}
+
+pub fn get_all_projects() -> Result<Vec<Project>, String> {
+    let conn = Connection::open(get_db_path())
+        .map_err(|e| format!("DB connection error: {}", e))?;
+
+    let mut stmt = conn.prepare("SELECT id, name, path, created_at, last_scanned FROM projects ORDER BY created_at DESC")
+        .map_err(|e| format!("Prepare error: {}", e))?;
+
+    let projects = stmt.query_map([], |row| {
+        Ok(Project {
+            id: row.get(0)?,
+            name: row.get(1)?,
+            path: row.get(2)?,
+            created_at: row.get(3)?,
+            last_scanned: row.get(4)?,
+        })
+    })
+    .map_err(|e| format!("Query error: {}", e))?
+    .collect::<Result<Vec<_>, _>>()
+    .map_err(|e| format!("Collection error: {}", e))?;
+
+    Ok(projects)
+}
+
+pub fn delete_project(project_id: String) -> Result<(), String> {
+    let conn = Connection::open(get_db_path())
+        .map_err(|e| format!("DB error: {}", e))?;
+
+    // Delete associated endpoints first
+    conn.execute(
+        "DELETE FROM endpoints WHERE project_id = ?",
+        rusqlite::params![project_id],
+    )
+    .map_err(|e| format!("Delete endpoints error: {}", e))?;
+
+    // Delete project
+    conn.execute(
+        "DELETE FROM projects WHERE id = ?",
+        rusqlite::params![project_id],
+    )
+    .map_err(|e| format!("Delete project error: {}", e))?;
+
+    Ok(())
+}
+
+pub fn get_endpoints_by_project(project_id: String) -> Result<Vec<ApiEndpoint>, String> {
+    let conn = Connection::open(get_db_path())
+        .map_err(|e| format!("DB connection error: {}", e))?;
+
+    let mut stmt = conn.prepare(
+        "SELECT id, project_id, name, method, path, service, description, category, parameters, explanation 
+         FROM endpoints WHERE project_id = ?"
+    )
+    .map_err(|e| format!("Prepare error: {}", e))?;
+
+    let endpoints = stmt.query_map([&project_id], |row| {
+        let params_json: String = row.get(8)?;
+        let parameters: Vec<crate::types::ApiParameter> = serde_json::from_str(&params_json)
+            .unwrap_or_default();
+
+        Ok(ApiEndpoint {
+            id: row.get(0)?,
+            project_id: row.get(1)?,
+            name: row.get(2)?,
+            method: row.get(3)?,
+            path: row.get(4)?,
+            service: row.get(5)?,
+            description: row.get(6)?,
+            category: row.get(7)?,
+            parameters,
+            explanation: row.get(9)?,
+        })
+    })
+    .map_err(|e| format!("Query error: {}", e))?
+    .collect::<Result<Vec<_>, _>>()
+    .map_err(|e| format!("Collection error: {}", e))?;
+
+    Ok(endpoints)
+}
+
+pub fn clear_project_endpoints(project_id: &str) -> Result<(), String> {
+    let conn = Connection::open(get_db_path())
+        .map_err(|e| format!("DB error: {}", e))?;
+
+    conn.execute(
+        "DELETE FROM endpoints WHERE project_id = ?",
+        rusqlite::params![project_id],
+    )
+    .map_err(|e| format!("Delete error: {}", e))?;
+
+    Ok(())
+}
+
+pub fn update_project_last_scanned(project_id: &str) -> Result<(), String> {
+    let conn = Connection::open(get_db_path())
+        .map_err(|e| format!("DB error: {}", e))?;
+
+    let now = chrono::Utc::now().timestamp();
+
+    conn.execute(
+        "UPDATE projects SET last_scanned = ? WHERE id = ?",
+        rusqlite::params![now, project_id],
+    )
+    .map_err(|e| format!("Update error: {}", e))?;
 
     Ok(())
 }

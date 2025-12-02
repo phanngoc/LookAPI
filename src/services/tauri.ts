@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
-import { APIEndpoint, APIRequest, APIResponse, TestSuite, QueryResult } from '../types/api';
+import { APIEndpoint, APIRequest, APIResponse, TestSuite, QueryResult, Project } from '../types/api';
 
 export const tauriService = {
   async executeHttpRequest(request: APIRequest): Promise<APIResponse> {
@@ -28,5 +28,30 @@ export const tauriService = {
 
   async exportResponse(filename: string, content: string): Promise<string> {
     return invoke('export_response', { filename, content });
+  },
+
+  // Project management
+  async openFolderDialog(): Promise<string | null> {
+    return invoke('open_folder_dialog');
+  },
+
+  async createProject(path: string): Promise<Project> {
+    return invoke('create_project', { path });
+  },
+
+  async getAllProjects(): Promise<Project[]> {
+    return invoke('get_all_projects');
+  },
+
+  async deleteProject(projectId: string): Promise<void> {
+    return invoke('delete_project', { projectId });
+  },
+
+  async getEndpointsByProject(projectId: string): Promise<APIEndpoint[]> {
+    return invoke('get_endpoints_by_project', { projectId });
+  },
+
+  async scanProject(projectId: string, projectPath: string): Promise<APIEndpoint[]> {
+    return invoke('scan_project', { projectId, projectPath });
   },
 };

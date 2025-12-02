@@ -14,6 +14,7 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip';
 import { useEnvironment } from '@/contexts/EnvironmentContext';
+import { ProjectSelector } from '@/components/project/ProjectSelector';
 
 export function Header() {
   const { environments, activeEnvironment, setActiveEnvironment } = useEnvironment();
@@ -26,13 +27,20 @@ export function Header() {
   return (
     <header className="h-14 border-b border-slate-200 bg-white flex items-center justify-between px-4 shrink-0">
       {/* Logo & Title */}
-      <div className="flex items-center gap-3">
-        <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-gradient-to-br from-blue-500 to-blue-600 shadow-sm">
-          <Zap className="w-4 h-4 text-white" />
+      <div className="flex items-center gap-4">
+        <div className="flex items-center gap-3">
+          <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-gradient-to-br from-blue-500 to-blue-600 shadow-sm">
+            <Zap className="w-4 h-4 text-white" />
+          </div>
+          <div>
+            <h1 className="text-base font-semibold text-slate-900">API Tester</h1>
+          </div>
         </div>
-        <div>
-          <h1 className="text-base font-semibold text-slate-900">API Tester</h1>
-        </div>
+
+        <div className="h-6 w-px bg-slate-200" />
+
+        {/* Project Selector */}
+        <ProjectSelector />
       </div>
 
       {/* Environment Selector */}

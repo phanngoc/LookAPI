@@ -1,8 +1,21 @@
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct Project {
+    pub id: String,
+    pub name: String,
+    pub path: String,
+    #[serde(rename = "createdAt")]
+    pub created_at: i64,
+    #[serde(rename = "lastScanned")]
+    pub last_scanned: Option<i64>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ApiEndpoint {
     pub id: String,
+    #[serde(rename = "projectId")]
+    pub project_id: Option<String>,
     pub name: String,
     pub method: String,
     pub path: String,
