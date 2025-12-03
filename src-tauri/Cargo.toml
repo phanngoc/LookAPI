@@ -33,4 +33,6 @@ dirs = "5.0"
 glob = "0.3"
 regex = "1.10"
 uuid = { version = "1", features = ["v4"] }
+log = "0.4"
+env_logger = "0.11"
 

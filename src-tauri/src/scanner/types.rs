@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FrameworkInfo {
@@ -45,6 +46,9 @@ pub struct EndpointParameter {
     pub source: String, // 'path', 'query', 'body', 'header'
     pub required: bool,
     pub validation: Option<Vec<String>>,
+    pub example: Option<Value>,
+    #[serde(rename = "defaultValue")]
+    pub default_value: Option<Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

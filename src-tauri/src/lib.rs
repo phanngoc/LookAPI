@@ -6,6 +6,9 @@ pub mod types;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Initialize logger
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("debug")).init();
+    
     // Initialize database
     database::init_database().expect("Failed to initialize database");
 

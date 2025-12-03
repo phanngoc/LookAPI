@@ -144,8 +144,8 @@ pub async fn scan_project(project_id: String, project_path: String) -> Result<Ve
                 param_type: p.param_type,
                 required: p.required,
                 description: String::new(),
-                example: None,
-                default_value: None,
+                example: p.example,
+                default_value: p.default_value,
             })
             .collect();
 
