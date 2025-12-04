@@ -1,4 +1,5 @@
-use crate::{database, http_client, scanner, types::*};
+use crate::{database, http_client, scanner, scenario, security, types::*};
+use std::collections::HashMap;
 use std::path::PathBuf;
 use tauri_plugin_dialog::DialogExt;
 use uuid::Uuid;
@@ -182,4 +183,227 @@ pub async fn scan_project(project_id: String, project_path: String) -> Result<Ve
         .map_err(|e| format!("Failed to update project timestamp: {}", e))?;
 
     Ok(api_endpoints)
+}
+
+// Security testing commands
+#[tauri::command]
+pub async fn create_security_test_case(
+    project_id: String,
+    name: String,
+    endpoint_id: Option<String>,
+    scans: Vec<security::types::ScanConfig>,
+) -> Result<security::types::SecurityTestCase, String> {
+    let now = chrono::Utc::now().timestamp();
+    let test_case = security::types::SecurityTestCase {
+        id: Uuid::new_v4().to_string(),
+        project_id,
+        name,
+        endpoint_id,
+        scans,
+        created_at: now,
+        updated_at: now,
+    };
+
+    database::save_security_test_case(test_case.clone())?;
+    Ok(test_case)
+}
+
+#[tauri::command]
+pub async fn get_security_test_cases(
+    project_id: String,
+) -> Result<Vec<security::types::SecurityTestCase>, String> {
+    database::get_security_test_cases_by_project(&project_id)
+}
+
+#[tauri::command]
+pub async fn delete_security_test_case(id: String) -> Result<(), String> {
+    database::delete_security_test_case(&id)
+}
+
+#[tauri::command]
+pub async fn run_security_test(
+    test_case: security::types::SecurityTestCase,
+    url: String,
+    method: String,
+    params: HashMap<String, serde_json::Value>,
+    headers: HashMap<String, String>,
+) -> Result<security::types::SecurityTestRun, String> {
+    let run = security::scanner::run_security_test(&test_case, &url, &method, &params, &headers);
+    database::save_security_test_run(&run)?;
+    Ok(run)
+}
+
+#[tauri::command]
+pub async fn get_security_test_runs(
+    test_case_id: String,
+) -> Result<Vec<security::types::SecurityTestRun>, String> {
+    database::get_security_test_runs(&test_case_id)
+}
+
+// ============================================================================
+// Test Scenario Commands
+// ============================================================================
+
+#[tauri::command]
+pub async fn create_test_scenario(
+    project_id: String,
+    name: String,
+    description: Option<String>,
+    priority: Option<String>,
+) -> Result<scenario::types::TestScenario, String> {
+    let now = chrono::Utc::now().timestamp();
+    let scenario = scenario::types::TestScenario {
+        id: Uuid::new_v4().to_string(),
+        project_id,
+        name,
+        description,
+        priority: priority.unwrap_or_else(|| "medium".to_string()),
+        variables: serde_json::json!({}),
+        pre_script: None,
+        post_script: None,
+        created_at: now,
+        updated_at: now,
+    };
+
+    database::save_test_scenario(scenario.clone())?;
+    Ok(scenario)
+}
+
+#[tauri::command]
+pub async fn get_test_scenarios(
+    project_id: String,
+) -> Result<Vec<scenario::types::TestScenario>, String> {
+    database::get_test_scenarios_by_project(&project_id)
+}
+
+#[tauri::command]
+pub async fn get_test_scenario(
+    scenario_id: String,
+) -> Result<Option<scenario::types::TestScenario>, String> {
+    database::get_test_scenario(&scenario_id)
+}
+
+#[tauri::command]
+pub async fn update_test_scenario(
+    request: scenario::types::UpdateScenarioRequest,
+) -> Result<scenario::types::TestScenario, String> {
+    let existing = database::get_test_scenario(&request.id)?
+        .ok_or_else(|| "Scenario not found".to_string())?;
+
+    let now = chrono::Utc::now().timestamp();
+    let updated = scenario::types::TestScenario {
+        id: existing.id,
+        project_id: existing.project_id,
+        name: request.name.unwrap_or(existing.name),
+        description: request.description.or(existing.description),
+        priority: request.priority.unwrap_or(existing.priority),
+        variables: request.variables.unwrap_or(existing.variables),
+        pre_script: request.pre_script.or(existing.pre_script),
+        post_script: request.post_script.or(existing.post_script),
+        created_at: existing.created_at,
+        updated_at: now,
+    };
+
+    database::save_test_scenario(updated.clone())?;
+    Ok(updated)
+}
+
+#[tauri::command]
+pub async fn delete_test_scenario(scenario_id: String) -> Result<(), String> {
+    database::delete_test_scenario(&scenario_id)
+}
+
+#[tauri::command]
+pub async fn add_test_scenario_step(
+    request: scenario::types::CreateStepRequest,
+) -> Result<scenario::types::TestScenarioStep, String> {
+    // Get existing steps to determine order
+    let existing_steps = database::get_test_scenario_steps(&request.scenario_id)?;
+    let max_order = existing_steps.iter().map(|s| s.step_order).max().unwrap_or(-1);
+
+    let step = scenario::types::TestScenarioStep {
+        id: Uuid::new_v4().to_string(),
+        scenario_id: request.scenario_id,
+        step_order: max_order + 1,
+        step_type: request.step_type,
+        name: request.name,
+        config: request.config,
+        enabled: true,
+    };
+
+    database::save_test_scenario_step(step.clone())?;
+    Ok(step)
+}
+
+#[tauri::command]
+pub async fn get_test_scenario_steps(
+    scenario_id: String,
+) -> Result<Vec<scenario::types::TestScenarioStep>, String> {
+    database::get_test_scenario_steps(&scenario_id)
+}
+
+#[tauri::command]
+pub async fn update_test_scenario_step(
+    request: scenario::types::UpdateStepRequest,
+) -> Result<scenario::types::TestScenarioStep, String> {
+    // Need to get the step from its scenario
+    let all_scenarios = database::get_test_scenarios_by_project("")?;
+    let mut found_step: Option<scenario::types::TestScenarioStep> = None;
+    
+    for scenario in &all_scenarios {
+        let steps = database::get_test_scenario_steps(&scenario.id)?;
+        if let Some(step) = steps.into_iter().find(|s| s.id == request.id) {
+            found_step = Some(step);
+            break;
+        }
+    }
+
+    let existing = found_step.ok_or_else(|| "Step not found".to_string())?;
+
+    let updated = scenario::types::TestScenarioStep {
+        id: existing.id,
+        scenario_id: existing.scenario_id,
+        step_order: existing.step_order,
+        step_type: existing.step_type,
+        name: request.name.unwrap_or(existing.name),
+        config: request.config.unwrap_or(existing.config),
+        enabled: request.enabled.unwrap_or(existing.enabled),
+    };
+
+    database::save_test_scenario_step(updated.clone())?;
+    Ok(updated)
+}
+
+#[tauri::command]
+pub async fn delete_test_scenario_step(step_id: String) -> Result<(), String> {
+    database::delete_test_scenario_step(&step_id)
+}
+
+#[tauri::command]
+pub async fn reorder_test_scenario_steps(
+    request: scenario::types::ReorderStepsRequest,
+) -> Result<(), String> {
+    database::reorder_test_scenario_steps(&request.scenario_id, &request.step_ids)
+}
+
+#[tauri::command]
+pub async fn run_test_scenario(
+    scenario_id: String,
+) -> Result<scenario::types::TestScenarioRun, String> {
+    let scenario = database::get_test_scenario(&scenario_id)?
+        .ok_or_else(|| "Scenario not found".to_string())?;
+    
+    let steps = database::get_test_scenario_steps(&scenario_id)?;
+    
+    let run = scenario::executor::run_scenario(&scenario, &steps);
+    database::save_test_scenario_run(&run)?;
+    
+    Ok(run)
+}
+
+#[tauri::command]
+pub async fn get_test_scenario_runs(
+    scenario_id: String,
+) -> Result<Vec<scenario::types::TestScenarioRun>, String> {
+    database::get_test_scenario_runs(&scenario_id)
 }

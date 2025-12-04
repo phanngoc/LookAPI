@@ -34,15 +34,22 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
     loadProjects();
   }, []);
 
-  // Restore active project from localStorage
+  // Restore active project from localStorage or auto-select first project
   useEffect(() => {
+    if (projects.length === 0) return;
+    
     const storedProjectId = localStorage.getItem(ACTIVE_PROJECT_KEY);
-    if (storedProjectId && projects.length > 0) {
+    if (storedProjectId) {
       const project = projects.find(p => p.id === storedProjectId);
       if (project) {
         setCurrentProject(project);
+        return;
       }
     }
+    
+    // Auto-select first project if no stored project or stored project doesn't exist
+    // Only set if currentProject is null to avoid overwriting user selection
+    setCurrentProject(prev => prev || projects[0] || null);
   }, [projects]);
 
   // Persist active project to localStorage

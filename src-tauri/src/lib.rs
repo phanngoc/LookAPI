@@ -2,6 +2,8 @@ pub mod commands;
 pub mod database;
 pub mod http_client;
 pub mod scanner;
+pub mod scenario;
+pub mod security;
 pub mod types;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -30,6 +32,25 @@ pub fn run() {
             commands::get_all_projects,
             commands::delete_project,
             commands::get_endpoints_by_project,
+            // Security testing commands
+            commands::create_security_test_case,
+            commands::get_security_test_cases,
+            commands::delete_security_test_case,
+            commands::run_security_test,
+            commands::get_security_test_runs,
+            // Test scenario commands
+            commands::create_test_scenario,
+            commands::get_test_scenarios,
+            commands::get_test_scenario,
+            commands::update_test_scenario,
+            commands::delete_test_scenario,
+            commands::add_test_scenario_step,
+            commands::get_test_scenario_steps,
+            commands::update_test_scenario_step,
+            commands::delete_test_scenario_step,
+            commands::reorder_test_scenario_steps,
+            commands::run_test_scenario,
+            commands::get_test_scenario_runs,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

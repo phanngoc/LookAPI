@@ -1,4 +1,6 @@
 use crate::types::{ApiEndpoint, TestSuite, QueryResult, Project};
+use crate::security::types::{SecurityTestCase, SecurityTestRun, ScanConfig};
+use crate::scenario::types::{TestScenario, TestScenarioStep, TestScenarioRun, TestStepType, ScenarioRunStatus};
 use rusqlite::{Connection, Result};
 use std::path::PathBuf;
 
@@ -57,6 +59,93 @@ pub fn init_database() -> Result<()> {
             category TEXT,
             created_at INTEGER,
             updated_at INTEGER
+        )",
+        [],
+    )?;
+
+    // Security test cases table
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS security_test_cases (
+            id TEXT PRIMARY KEY,
+            project_id TEXT NOT NULL,
+            name TEXT NOT NULL,
+            endpoint_id TEXT,
+            scans TEXT NOT NULL DEFAULT '[]',
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL,
+            FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+        )",
+        [],
+    )?;
+
+    // Security test runs table
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS security_test_runs (
+            id TEXT PRIMARY KEY,
+            test_case_id TEXT NOT NULL,
+            status TEXT NOT NULL,
+            total_scans INTEGER NOT NULL,
+            completed_scans INTEGER NOT NULL,
+            total_requests INTEGER NOT NULL,
+            total_alerts INTEGER NOT NULL,
+            results TEXT NOT NULL DEFAULT '[]',
+            started_at INTEGER NOT NULL,
+            completed_at INTEGER,
+            FOREIGN KEY (test_case_id) REFERENCES security_test_cases(id) ON DELETE CASCADE
+        )",
+        [],
+    )?;
+
+    // Test scenarios table
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS test_scenarios (
+            id TEXT PRIMARY KEY,
+            project_id TEXT NOT NULL,
+            name TEXT NOT NULL,
+            description TEXT,
+            priority TEXT DEFAULT 'medium',
+            variables TEXT DEFAULT '{}',
+            pre_script TEXT,
+            post_script TEXT,
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL,
+            FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+        )",
+        [],
+    )?;
+
+    // Test scenario steps table
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS test_scenario_steps (
+            id TEXT PRIMARY KEY,
+            scenario_id TEXT NOT NULL,
+            step_order INTEGER NOT NULL,
+            step_type TEXT NOT NULL,
+            name TEXT NOT NULL,
+            config TEXT NOT NULL DEFAULT '{}',
+            enabled INTEGER DEFAULT 1,
+            FOREIGN KEY (scenario_id) REFERENCES test_scenarios(id) ON DELETE CASCADE
+        )",
+        [],
+    )?;
+
+    // Test scenario runs table
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS test_scenario_runs (
+            id TEXT PRIMARY KEY,
+            scenario_id TEXT NOT NULL,
+            status TEXT NOT NULL,
+            total_steps INTEGER NOT NULL,
+            passed_steps INTEGER NOT NULL DEFAULT 0,
+            failed_steps INTEGER NOT NULL DEFAULT 0,
+            skipped_steps INTEGER NOT NULL DEFAULT 0,
+            duration_ms INTEGER,
+            started_at INTEGER NOT NULL,
+            completed_at INTEGER,
+            error_message TEXT,
+            results TEXT NOT NULL DEFAULT '[]',
+            variables TEXT DEFAULT '{}',
+            FOREIGN KEY (scenario_id) REFERENCES test_scenarios(id) ON DELETE CASCADE
         )",
         [],
     )?;
@@ -332,4 +421,463 @@ pub fn execute_sql_query(db_path: String, query: String) -> Result<QueryResult, 
         rows,
         row_count,
     })
+}
+
+// Security test case functions
+pub fn save_security_test_case(test_case: SecurityTestCase) -> Result<(), String> {
+    let conn = Connection::open(get_db_path())
+        .map_err(|e| format!("DB error: {}", e))?;
+
+    let scans_json = serde_json::to_string(&test_case.scans)
+        .map_err(|e| format!("Serialization error: {}", e))?;
+
+    conn.execute(
+        "INSERT OR REPLACE INTO security_test_cases 
+        (id, project_id, name, endpoint_id, scans, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)",
+        rusqlite::params![
+            test_case.id,
+            test_case.project_id,
+            test_case.name,
+            test_case.endpoint_id,
+            scans_json,
+            test_case.created_at,
+            test_case.updated_at
+        ],
+    )
+    .map_err(|e| format!("Insert error: {}", e))?;
+
+    Ok(())
+}
+
+pub fn get_security_test_cases_by_project(project_id: &str) -> Result<Vec<SecurityTestCase>, String> {
+    let conn = Connection::open(get_db_path())
+        .map_err(|e| format!("DB error: {}", e))?;
+
+    let mut stmt = conn.prepare(
+        "SELECT id, project_id, name, endpoint_id, scans, created_at, updated_at 
+         FROM security_test_cases WHERE project_id = ?"
+    )
+    .map_err(|e| format!("Prepare error: {}", e))?;
+
+    let cases = stmt.query_map([project_id], |row| {
+        let scans_json: String = row.get(4)?;
+        let scans: Vec<ScanConfig> = serde_json::from_str(&scans_json).unwrap_or_default();
+
+        Ok(SecurityTestCase {
+            id: row.get(0)?,
+            project_id: row.get(1)?,
+            name: row.get(2)?,
+            endpoint_id: row.get(3)?,
+            scans,
+            created_at: row.get(5)?,
+            updated_at: row.get(6)?,
+        })
+    })
+    .map_err(|e| format!("Query error: {}", e))?
+    .collect::<Result<Vec<_>, _>>()
+    .map_err(|e| format!("Collection error: {}", e))?;
+
+    Ok(cases)
+}
+
+pub fn delete_security_test_case(id: &str) -> Result<(), String> {
+    let conn = Connection::open(get_db_path())
+        .map_err(|e| format!("DB error: {}", e))?;
+
+    conn.execute(
+        "DELETE FROM security_test_runs WHERE test_case_id = ?",
+        rusqlite::params![id],
+    ).ok();
+
+    conn.execute(
+        "DELETE FROM security_test_cases WHERE id = ?",
+        rusqlite::params![id],
+    )
+    .map_err(|e| format!("Delete error: {}", e))?;
+
+    Ok(())
+}
+
+pub fn save_security_test_run(run: &SecurityTestRun) -> Result<(), String> {
+    let conn = Connection::open(get_db_path())
+        .map_err(|e| format!("DB error: {}", e))?;
+
+    let results_json = serde_json::to_string(&run.results)
+        .map_err(|e| format!("Serialization error: {}", e))?;
+
+    let status_str = match run.status {
+        crate::security::types::ScanStatus::Pass => "Pass",
+        crate::security::types::ScanStatus::Fail => "Fail",
+        crate::security::types::ScanStatus::Running => "Running",
+        crate::security::types::ScanStatus::Pending => "Pending",
+        crate::security::types::ScanStatus::Error => "Error",
+    };
+
+    conn.execute(
+        "INSERT INTO security_test_runs 
+        (id, test_case_id, status, total_scans, completed_scans, total_requests, total_alerts, results, started_at, completed_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        rusqlite::params![
+            run.id,
+            run.test_case_id,
+            status_str,
+            run.total_scans,
+            run.completed_scans,
+            run.total_requests,
+            run.total_alerts,
+            results_json,
+            run.started_at,
+            run.completed_at
+        ],
+    )
+    .map_err(|e| format!("Insert error: {}", e))?;
+
+    Ok(())
+}
+
+pub fn get_security_test_runs(test_case_id: &str) -> Result<Vec<SecurityTestRun>, String> {
+    let conn = Connection::open(get_db_path())
+        .map_err(|e| format!("DB error: {}", e))?;
+
+    let mut stmt = conn.prepare(
+        "SELECT id, test_case_id, status, total_scans, completed_scans, total_requests, total_alerts, results, started_at, completed_at 
+         FROM security_test_runs WHERE test_case_id = ? ORDER BY started_at DESC"
+    )
+    .map_err(|e| format!("Prepare error: {}", e))?;
+
+    let runs = stmt.query_map([test_case_id], |row| {
+        let status_str: String = row.get(2)?;
+        let status = match status_str.as_str() {
+            "Pass" => crate::security::types::ScanStatus::Pass,
+            "Fail" => crate::security::types::ScanStatus::Fail,
+            "Running" => crate::security::types::ScanStatus::Running,
+            "Error" => crate::security::types::ScanStatus::Error,
+            _ => crate::security::types::ScanStatus::Pending,
+        };
+
+        let results_json: String = row.get(7)?;
+        let results = serde_json::from_str(&results_json).unwrap_or_default();
+
+        Ok(SecurityTestRun {
+            id: row.get(0)?,
+            test_case_id: row.get(1)?,
+            status,
+            total_scans: row.get(3)?,
+            completed_scans: row.get(4)?,
+            total_requests: row.get(5)?,
+            total_alerts: row.get(6)?,
+            results,
+            started_at: row.get(8)?,
+            completed_at: row.get(9)?,
+        })
+    })
+    .map_err(|e| format!("Query error: {}", e))?
+    .collect::<Result<Vec<_>, _>>()
+    .map_err(|e| format!("Collection error: {}", e))?;
+
+    Ok(runs)
+}
+
+// ============================================================================
+// Test Scenario Functions
+// ============================================================================
+
+/// Save a test scenario to the database
+pub fn save_test_scenario(scenario: TestScenario) -> Result<(), String> {
+    let conn = Connection::open(get_db_path())
+        .map_err(|e| format!("DB error: {}", e))?;
+
+    let variables_json = serde_json::to_string(&scenario.variables)
+        .map_err(|e| format!("Serialization error: {}", e))?;
+
+    conn.execute(
+        "INSERT OR REPLACE INTO test_scenarios 
+        (id, project_id, name, description, priority, variables, pre_script, post_script, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        rusqlite::params![
+            scenario.id,
+            scenario.project_id,
+            scenario.name,
+            scenario.description,
+            scenario.priority,
+            variables_json,
+            scenario.pre_script,
+            scenario.post_script,
+            scenario.created_at,
+            scenario.updated_at
+        ],
+    )
+    .map_err(|e| format!("Insert error: {}", e))?;
+
+    Ok(())
+}
+
+/// Get all test scenarios for a project
+pub fn get_test_scenarios_by_project(project_id: &str) -> Result<Vec<TestScenario>, String> {
+    let conn = Connection::open(get_db_path())
+        .map_err(|e| format!("DB error: {}", e))?;
+
+    let mut stmt = conn.prepare(
+        "SELECT id, project_id, name, description, priority, variables, pre_script, post_script, created_at, updated_at 
+         FROM test_scenarios WHERE project_id = ? ORDER BY created_at DESC"
+    )
+    .map_err(|e| format!("Prepare error: {}", e))?;
+
+    let scenarios = stmt.query_map([project_id], |row| {
+        let variables_json: String = row.get(5)?;
+        let variables: serde_json::Value = serde_json::from_str(&variables_json)
+            .unwrap_or(serde_json::json!({}));
+
+        Ok(TestScenario {
+            id: row.get(0)?,
+            project_id: row.get(1)?,
+            name: row.get(2)?,
+            description: row.get(3)?,
+            priority: row.get(4)?,
+            variables,
+            pre_script: row.get(6)?,
+            post_script: row.get(7)?,
+            created_at: row.get(8)?,
+            updated_at: row.get(9)?,
+        })
+    })
+    .map_err(|e| format!("Query error: {}", e))?
+    .collect::<Result<Vec<_>, _>>()
+    .map_err(|e| format!("Collection error: {}", e))?;
+
+    Ok(scenarios)
+}
+
+/// Get a single test scenario by ID
+pub fn get_test_scenario(scenario_id: &str) -> Result<Option<TestScenario>, String> {
+    let conn = Connection::open(get_db_path())
+        .map_err(|e| format!("DB error: {}", e))?;
+
+    let mut stmt = conn.prepare(
+        "SELECT id, project_id, name, description, priority, variables, pre_script, post_script, created_at, updated_at 
+         FROM test_scenarios WHERE id = ?"
+    )
+    .map_err(|e| format!("Prepare error: {}", e))?;
+
+    let scenario = stmt.query_row([scenario_id], |row| {
+        let variables_json: String = row.get(5)?;
+        let variables: serde_json::Value = serde_json::from_str(&variables_json)
+            .unwrap_or(serde_json::json!({}));
+
+        Ok(TestScenario {
+            id: row.get(0)?,
+            project_id: row.get(1)?,
+            name: row.get(2)?,
+            description: row.get(3)?,
+            priority: row.get(4)?,
+            variables,
+            pre_script: row.get(6)?,
+            post_script: row.get(7)?,
+            created_at: row.get(8)?,
+            updated_at: row.get(9)?,
+        })
+    });
+
+    match scenario {
+        Ok(s) => Ok(Some(s)),
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+        Err(e) => Err(format!("Query error: {}", e)),
+    }
+}
+
+/// Delete a test scenario and all its steps
+pub fn delete_test_scenario(scenario_id: &str) -> Result<(), String> {
+    let conn = Connection::open(get_db_path())
+        .map_err(|e| format!("DB error: {}", e))?;
+
+    // Delete associated runs first
+    conn.execute(
+        "DELETE FROM test_scenario_runs WHERE scenario_id = ?",
+        rusqlite::params![scenario_id],
+    ).ok();
+
+    // Delete associated steps
+    conn.execute(
+        "DELETE FROM test_scenario_steps WHERE scenario_id = ?",
+        rusqlite::params![scenario_id],
+    ).ok();
+
+    // Delete scenario
+    conn.execute(
+        "DELETE FROM test_scenarios WHERE id = ?",
+        rusqlite::params![scenario_id],
+    )
+    .map_err(|e| format!("Delete error: {}", e))?;
+
+    Ok(())
+}
+
+/// Save a test scenario step
+pub fn save_test_scenario_step(step: TestScenarioStep) -> Result<(), String> {
+    let conn = Connection::open(get_db_path())
+        .map_err(|e| format!("DB error: {}", e))?;
+
+    let config_json = serde_json::to_string(&step.config)
+        .map_err(|e| format!("Serialization error: {}", e))?;
+
+    conn.execute(
+        "INSERT OR REPLACE INTO test_scenario_steps 
+        (id, scenario_id, step_order, step_type, name, config, enabled)
+        VALUES (?, ?, ?, ?, ?, ?, ?)",
+        rusqlite::params![
+            step.id,
+            step.scenario_id,
+            step.step_order,
+            step.step_type.as_str(),
+            step.name,
+            config_json,
+            step.enabled as i32
+        ],
+    )
+    .map_err(|e| format!("Insert error: {}", e))?;
+
+    Ok(())
+}
+
+/// Get all steps for a scenario
+pub fn get_test_scenario_steps(scenario_id: &str) -> Result<Vec<TestScenarioStep>, String> {
+    let conn = Connection::open(get_db_path())
+        .map_err(|e| format!("DB error: {}", e))?;
+
+    let mut stmt = conn.prepare(
+        "SELECT id, scenario_id, step_order, step_type, name, config, enabled 
+         FROM test_scenario_steps WHERE scenario_id = ? ORDER BY step_order ASC"
+    )
+    .map_err(|e| format!("Prepare error: {}", e))?;
+
+    let steps = stmt.query_map([scenario_id], |row| {
+        let config_json: String = row.get(5)?;
+        let config: serde_json::Value = serde_json::from_str(&config_json)
+            .unwrap_or(serde_json::json!({}));
+        let step_type_str: String = row.get(3)?;
+        let enabled: i32 = row.get(6)?;
+
+        Ok(TestScenarioStep {
+            id: row.get(0)?,
+            scenario_id: row.get(1)?,
+            step_order: row.get(2)?,
+            step_type: TestStepType::from_str(&step_type_str),
+            name: row.get(4)?,
+            config,
+            enabled: enabled != 0,
+        })
+    })
+    .map_err(|e| format!("Query error: {}", e))?
+    .collect::<Result<Vec<_>, _>>()
+    .map_err(|e| format!("Collection error: {}", e))?;
+
+    Ok(steps)
+}
+
+/// Delete a test scenario step
+pub fn delete_test_scenario_step(step_id: &str) -> Result<(), String> {
+    let conn = Connection::open(get_db_path())
+        .map_err(|e| format!("DB error: {}", e))?;
+
+    conn.execute(
+        "DELETE FROM test_scenario_steps WHERE id = ?",
+        rusqlite::params![step_id],
+    )
+    .map_err(|e| format!("Delete error: {}", e))?;
+
+    Ok(())
+}
+
+/// Reorder steps in a scenario
+pub fn reorder_test_scenario_steps(scenario_id: &str, step_ids: &[String]) -> Result<(), String> {
+    let conn = Connection::open(get_db_path())
+        .map_err(|e| format!("DB error: {}", e))?;
+
+    for (index, step_id) in step_ids.iter().enumerate() {
+        conn.execute(
+            "UPDATE test_scenario_steps SET step_order = ? WHERE id = ? AND scenario_id = ?",
+            rusqlite::params![index as i32, step_id, scenario_id],
+        )
+        .map_err(|e| format!("Update error: {}", e))?;
+    }
+
+    Ok(())
+}
+
+/// Save a test scenario run
+pub fn save_test_scenario_run(run: &TestScenarioRun) -> Result<(), String> {
+    let conn = Connection::open(get_db_path())
+        .map_err(|e| format!("DB error: {}", e))?;
+
+    let results_json = serde_json::to_string(&run.results)
+        .map_err(|e| format!("Serialization error: {}", e))?;
+    
+    let variables_json = serde_json::to_string(&run.variables)
+        .map_err(|e| format!("Serialization error: {}", e))?;
+
+    conn.execute(
+        "INSERT INTO test_scenario_runs 
+        (id, scenario_id, status, total_steps, passed_steps, failed_steps, skipped_steps, 
+         duration_ms, started_at, completed_at, error_message, results, variables)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        rusqlite::params![
+            run.id,
+            run.scenario_id,
+            run.status.as_str(),
+            run.total_steps,
+            run.passed_steps,
+            run.failed_steps,
+            run.skipped_steps,
+            run.duration_ms,
+            run.started_at,
+            run.completed_at,
+            run.error_message,
+            results_json,
+            variables_json
+        ],
+    )
+    .map_err(|e| format!("Insert error: {}", e))?;
+
+    Ok(())
+}
+
+/// Get test scenario runs for a scenario
+pub fn get_test_scenario_runs(scenario_id: &str) -> Result<Vec<TestScenarioRun>, String> {
+    let conn = Connection::open(get_db_path())
+        .map_err(|e| format!("DB error: {}", e))?;
+
+    let mut stmt = conn.prepare(
+        "SELECT id, scenario_id, status, total_steps, passed_steps, failed_steps, skipped_steps,
+                duration_ms, started_at, completed_at, error_message, results, variables
+         FROM test_scenario_runs WHERE scenario_id = ? ORDER BY started_at DESC"
+    )
+    .map_err(|e| format!("Prepare error: {}", e))?;
+
+    let runs = stmt.query_map([scenario_id], |row| {
+        let status_str: String = row.get(2)?;
+        let results_json: String = row.get(11)?;
+        let variables_json: String = row.get(12)?;
+
+        Ok(TestScenarioRun {
+            id: row.get(0)?,
+            scenario_id: row.get(1)?,
+            status: ScenarioRunStatus::from_str(&status_str),
+            total_steps: row.get(3)?,
+            passed_steps: row.get(4)?,
+            failed_steps: row.get(5)?,
+            skipped_steps: row.get(6)?,
+            duration_ms: row.get(7)?,
+            started_at: row.get(8)?,
+            completed_at: row.get(9)?,
+            error_message: row.get(10)?,
+            results: serde_json::from_str(&results_json).unwrap_or_default(),
+            variables: serde_json::from_str(&variables_json).unwrap_or_default(),
+        })
+    })
+    .map_err(|e| format!("Query error: {}", e))?
+    .collect::<Result<Vec<_>, _>>()
+    .map_err(|e| format!("Collection error: {}", e))?;
+
+    Ok(runs)
 }

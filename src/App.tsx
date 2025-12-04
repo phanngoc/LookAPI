@@ -5,13 +5,15 @@ import { Sidebar } from '@/components/layout/Sidebar';
 import { RequestBuilder } from '@/components/request/RequestBuilder';
 import { TestSuiteRunner } from '@/components/test-suite/TestSuiteRunner';
 import { DatabaseQueryPanel } from '@/components/database/DatabaseQueryPanel';
+import { SecurityTestPanel } from '@/components/security/SecurityTestPanel';
+import { ScenarioPanel } from '@/components/scenario/ScenarioPanel';
 import { EnvironmentProvider } from '@/contexts/EnvironmentContext';
-import { ProjectProvider } from '@/contexts/ProjectContext';
+import { ProjectProvider, useProject } from '@/contexts/ProjectContext';
 import { Toaster } from '@/components/ui/toaster';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { APIEndpoint, TestSuite } from '@/types/api';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Zap, Database, Layers, ArrowRight, Code2, FolderCode } from 'lucide-react';
+import { Zap, Database, Layers, ArrowRight, Code2, FolderCode, Shield, FlaskConical } from 'lucide-react';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -22,9 +24,17 @@ const queryClient = new QueryClient({
   },
 });
 
-type ViewMode = 'request' | 'test-suite' | 'database' | 'welcome';
+type ViewMode = 'request' | 'test-suite' | 'database' | 'security' | 'scenario' | 'welcome';
 
-function WelcomeScreen({ onSelectDatabase }: { onSelectDatabase: () => void }) {
+function WelcomeScreen({ 
+  onSelectDatabase, 
+  onSelectSecurity,
+  onSelectScenarios,
+}: { 
+  onSelectDatabase: () => void; 
+  onSelectSecurity: () => void;
+  onSelectScenarios: () => void;
+}) {
   return (
     <div className="h-full flex items-center justify-center bg-gradient-subtle p-8">
       <div className="max-w-4xl w-full">
@@ -42,7 +52,7 @@ function WelcomeScreen({ onSelectDatabase }: { onSelectDatabase: () => void }) {
         </div>
 
         {/* Feature Cards */}
-        <div className="grid grid-cols-4 gap-4">
+        <div className="grid grid-cols-5 gap-4">
           <Card className="group hover:shadow-md transition-all duration-200 hover:-translate-y-0.5 cursor-default">
             <CardHeader className="pb-3">
               <div className="flex items-center justify-center w-10 h-10 rounded-xl bg-blue-100 mb-3 group-hover:scale-110 transition-transform">
@@ -79,6 +89,27 @@ function WelcomeScreen({ onSelectDatabase }: { onSelectDatabase: () => void }) {
             </CardContent>
           </Card>
 
+          <Card
+            className="group hover:shadow-md transition-all duration-200 hover:-translate-y-0.5 cursor-pointer"
+            onClick={onSelectScenarios}
+          >
+            <CardHeader className="pb-3">
+              <div className="flex items-center justify-center w-10 h-10 rounded-xl bg-violet-100 mb-3 group-hover:scale-110 transition-transform">
+                <FlaskConical className="w-5 h-5 text-violet-600" />
+              </div>
+              <CardTitle className="text-base">Test Scenarios</CardTitle>
+              <CardDescription className="text-sm">
+                Create multi-step test flows with assertions and variables
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="pt-0">
+              <div className="flex items-center text-xs text-blue-600 font-medium group-hover:gap-2 transition-all">
+                <span>Open scenarios</span>
+                <ArrowRight className="w-3.5 h-3.5 opacity-0 group-hover:opacity-100 transition-opacity" />
+              </div>
+            </CardContent>
+          </Card>
+
           <Card className="group hover:shadow-md transition-all duration-200 hover:-translate-y-0.5 cursor-default">
             <CardHeader className="pb-3">
               <div className="flex items-center justify-center w-10 h-10 rounded-xl bg-amber-100 mb-3 group-hover:scale-110 transition-transform">
@@ -92,6 +123,27 @@ function WelcomeScreen({ onSelectDatabase }: { onSelectDatabase: () => void }) {
             <CardContent className="pt-0">
               <div className="flex items-center text-xs text-blue-600 font-medium group-hover:gap-2 transition-all">
                 <span>Select a test suite</span>
+                <ArrowRight className="w-3.5 h-3.5 opacity-0 group-hover:opacity-100 transition-opacity" />
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card
+            className="group hover:shadow-md transition-all duration-200 hover:-translate-y-0.5 cursor-pointer"
+            onClick={onSelectSecurity}
+          >
+            <CardHeader className="pb-3">
+              <div className="flex items-center justify-center w-10 h-10 rounded-xl bg-cyan-100 mb-3 group-hover:scale-110 transition-transform">
+                <Shield className="w-5 h-5 text-cyan-600" />
+              </div>
+              <CardTitle className="text-base">Security Testing</CardTitle>
+              <CardDescription className="text-sm">
+                Scan APIs for SQL injection, XSS, and other vulnerabilities
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="pt-0">
+              <div className="flex items-center text-xs text-blue-600 font-medium group-hover:gap-2 transition-all">
+                <span>Open security panel</span>
                 <ArrowRight className="w-3.5 h-3.5 opacity-0 group-hover:opacity-100 transition-opacity" />
               </div>
             </CardContent>
@@ -134,6 +186,7 @@ function AppContent() {
   const [selectedEndpoint, setSelectedEndpoint] = useState<APIEndpoint | null>(null);
   const [selectedTestSuite, setSelectedTestSuite] = useState<TestSuite | null>(null);
   const [viewMode, setViewMode] = useState<ViewMode>('welcome');
+  const { currentProject } = useProject();
 
   const handleSelectEndpoint = (endpoint: APIEndpoint) => {
     setSelectedEndpoint(endpoint);
@@ -149,6 +202,14 @@ function AppContent() {
     setViewMode('database');
   };
 
+  const handleSelectSecurity = () => {
+    setViewMode('security');
+  };
+
+  const handleSelectScenarios = () => {
+    setViewMode('scenario');
+  };
+
   return (
     <div className="flex flex-col h-screen bg-slate-50 overflow-hidden">
       <Header />
@@ -158,12 +219,17 @@ function AppContent() {
           onSelectEndpoint={handleSelectEndpoint}
           onSelectTestSuite={handleSelectTestSuite}
           onSelectDatabase={handleSelectDatabase}
+          onSelectScenarios={handleSelectScenarios}
           selectedEndpointId={selectedEndpoint?.id}
         />
 
         <main className="flex-1 overflow-hidden">
           {viewMode === 'welcome' && (
-            <WelcomeScreen onSelectDatabase={handleSelectDatabase} />
+            <WelcomeScreen 
+              onSelectDatabase={handleSelectDatabase} 
+              onSelectSecurity={handleSelectSecurity}
+              onSelectScenarios={handleSelectScenarios}
+            />
           )}
 
           {viewMode === 'request' && selectedEndpoint && (
@@ -175,6 +241,32 @@ function AppContent() {
           )}
 
           {viewMode === 'database' && <DatabaseQueryPanel />}
+
+          {viewMode === 'security' && currentProject && (
+            <SecurityTestPanel
+              projectId={currentProject.id}
+              url=""
+              method="GET"
+              params={{}}
+              headers={{}}
+            />
+          )}
+
+          {viewMode === 'security' && !currentProject && (
+            <div className="flex items-center justify-center h-full text-gray-500">
+              Please select a project first to use Security Testing
+            </div>
+          )}
+
+          {viewMode === 'scenario' && currentProject && (
+            <ScenarioPanel projectId={currentProject.id} />
+          )}
+
+          {viewMode === 'scenario' && !currentProject && (
+            <div className="flex items-center justify-center h-full text-gray-500">
+              Please select a project first to use Test Scenarios
+            </div>
+          )}
         </main>
       </div>
     </div>

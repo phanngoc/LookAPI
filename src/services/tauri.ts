@@ -1,5 +1,15 @@
 import { invoke } from '@tauri-apps/api/core';
 import { APIEndpoint, APIRequest, APIResponse, TestSuite, QueryResult, Project } from '../types/api';
+import { SecurityTestCase, SecurityTestRun, ScanConfig } from '../types/security';
+import {
+  TestScenario,
+  TestScenarioStep,
+  TestScenarioRun,
+  UpdateScenarioRequest,
+  CreateStepRequest,
+  UpdateStepRequest,
+  ReorderStepsRequest,
+} from '../types/scenario';
 
 export const tauriService = {
   async executeHttpRequest(request: APIRequest): Promise<APIResponse> {
@@ -53,5 +63,94 @@ export const tauriService = {
 
   async scanProject(projectId: string, projectPath: string): Promise<APIEndpoint[]> {
     return invoke('scan_project', { projectId, projectPath });
+  },
+
+  // Security testing
+  async createSecurityTestCase(
+    projectId: string,
+    name: string,
+    endpointId: string | null,
+    scans: ScanConfig[]
+  ): Promise<SecurityTestCase> {
+    return invoke('create_security_test_case', { projectId, name, endpointId, scans });
+  },
+
+  async getSecurityTestCases(projectId: string): Promise<SecurityTestCase[]> {
+    return invoke('get_security_test_cases', { projectId });
+  },
+
+  async deleteSecurityTestCase(id: string): Promise<void> {
+    return invoke('delete_security_test_case', { id });
+  },
+
+  async runSecurityTest(
+    testCase: SecurityTestCase,
+    url: string,
+    method: string,
+    params: Record<string, any>,
+    headers: Record<string, string>
+  ): Promise<SecurityTestRun> {
+    return invoke('run_security_test', { testCase, url, method, params, headers });
+  },
+
+  async getSecurityTestRuns(testCaseId: string): Promise<SecurityTestRun[]> {
+    return invoke('get_security_test_runs', { testCaseId });
+  },
+
+  // ============================================================================
+  // Test Scenario APIs
+  // ============================================================================
+
+  async createTestScenario(
+    projectId: string,
+    name: string,
+    description?: string,
+    priority?: 'low' | 'medium' | 'high'
+  ): Promise<TestScenario> {
+    return invoke('create_test_scenario', { projectId, name, description, priority });
+  },
+
+  async getTestScenarios(projectId: string): Promise<TestScenario[]> {
+    return invoke('get_test_scenarios', { projectId });
+  },
+
+  async getTestScenario(scenarioId: string): Promise<TestScenario | null> {
+    return invoke('get_test_scenario', { scenarioId });
+  },
+
+  async updateTestScenario(request: UpdateScenarioRequest): Promise<TestScenario> {
+    return invoke('update_test_scenario', { request });
+  },
+
+  async deleteTestScenario(scenarioId: string): Promise<void> {
+    return invoke('delete_test_scenario', { scenarioId });
+  },
+
+  async addTestScenarioStep(request: CreateStepRequest): Promise<TestScenarioStep> {
+    return invoke('add_test_scenario_step', { request });
+  },
+
+  async getTestScenarioSteps(scenarioId: string): Promise<TestScenarioStep[]> {
+    return invoke('get_test_scenario_steps', { scenarioId });
+  },
+
+  async updateTestScenarioStep(request: UpdateStepRequest): Promise<TestScenarioStep> {
+    return invoke('update_test_scenario_step', { request });
+  },
+
+  async deleteTestScenarioStep(stepId: string): Promise<void> {
+    return invoke('delete_test_scenario_step', { stepId });
+  },
+
+  async reorderTestScenarioSteps(request: ReorderStepsRequest): Promise<void> {
+    return invoke('reorder_test_scenario_steps', { request });
+  },
+
+  async runTestScenario(scenarioId: string): Promise<TestScenarioRun> {
+    return invoke('run_test_scenario', { scenarioId });
+  },
+
+  async getTestScenarioRuns(scenarioId: string): Promise<TestScenarioRun[]> {
+    return invoke('get_test_scenario_runs', { scenarioId });
   },
 };

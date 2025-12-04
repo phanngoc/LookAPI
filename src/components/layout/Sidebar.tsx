@@ -10,6 +10,7 @@ import {
   Layers,
   FolderCode,
   SearchX,
+  FlaskConical,
 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -31,6 +32,7 @@ interface SidebarProps {
   onSelectEndpoint: (endpoint: APIEndpoint) => void;
   onSelectTestSuite: (suite: TestSuite) => void;
   onSelectDatabase: () => void;
+  onSelectScenarios: () => void;
   selectedEndpointId?: string;
 }
 
@@ -38,6 +40,7 @@ export function Sidebar({
   onSelectEndpoint,
   onSelectTestSuite,
   onSelectDatabase,
+  onSelectScenarios,
   selectedEndpointId,
 }: SidebarProps) {
   const { currentProject, isScanning } = useProject();
@@ -177,13 +180,21 @@ export function Sidebar({
       <ScrollArea className="flex-1">
         <div className="p-2">
           {/* Quick Actions */}
-          <div className="mb-3">
+          <div className="mb-3 space-y-1">
+            <Button
+              variant="ghost"
+              className="w-full justify-start gap-2 h-9 text-sm font-normal hover:bg-slate-100"
+              onClick={onSelectScenarios}
+            >
+              <FlaskConical className="w-4 h-4 text-violet-500" />
+              <span>Test Scenarios</span>
+            </Button>
             <Button
               variant="ghost"
               className="w-full justify-start gap-2 h-9 text-sm font-normal hover:bg-slate-100"
               onClick={onSelectDatabase}
             >
-              <Database className="w-4 h-4 text-violet-500" />
+              <Database className="w-4 h-4 text-emerald-500" />
               <span>Database Query</span>
             </Button>
           </div>
