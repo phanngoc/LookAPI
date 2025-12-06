@@ -1,19 +1,17 @@
 import { useState } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Header } from '@/components/layout/Header';
+import { PrimaryNavigation, FeatureType } from '@/components/layout/PrimaryNavigation';
 import { Sidebar } from '@/components/layout/Sidebar';
 import { RequestBuilder } from '@/components/request/RequestBuilder';
-import { TestSuiteRunner } from '@/components/test-suite/TestSuiteRunner';
 import { DatabaseQueryPanel } from '@/components/database/DatabaseQueryPanel';
-import { SecurityTestPanel } from '@/components/security/SecurityTestPanel';
 import { ScenarioPanel } from '@/components/scenario/ScenarioPanel';
 import { EnvironmentProvider } from '@/contexts/EnvironmentContext';
 import { ProjectProvider, useProject } from '@/contexts/ProjectContext';
 import { Toaster } from '@/components/ui/toaster';
 import { TooltipProvider } from '@/components/ui/tooltip';
-import { APIEndpoint, TestSuite } from '@/types/api';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Zap, Database, Layers, ArrowRight, Code2, FolderCode, Shield, FlaskConical } from 'lucide-react';
+import { APIEndpoint } from '@/types/api';
+import { TestScenario } from '@/types/scenario';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -24,190 +22,26 @@ const queryClient = new QueryClient({
   },
 });
 
-type ViewMode = 'request' | 'test-suite' | 'database' | 'security' | 'scenario' | 'welcome';
-
-function WelcomeScreen({ 
-  onSelectDatabase, 
-  onSelectSecurity,
-  onSelectScenarios,
-}: { 
-  onSelectDatabase: () => void; 
-  onSelectSecurity: () => void;
-  onSelectScenarios: () => void;
-}) {
-  return (
-    <div className="h-full flex items-center justify-center bg-gradient-subtle p-8">
-      <div className="max-w-4xl w-full">
-        {/* Hero */}
-        <div className="text-center mb-12">
-          <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-gradient-to-br from-blue-500 to-blue-600 shadow-lg shadow-blue-500/25 mb-6">
-            <Zap className="w-8 h-8 text-white" />
-          </div>
-          <h1 className="text-3xl font-bold text-slate-900 mb-3">
-            Welcome to API Tester
-          </h1>
-          <p className="text-lg text-slate-500 max-w-md mx-auto">
-            A powerful tool for testing APIs, running test suites, and querying databases.
-          </p>
-        </div>
-
-        {/* Feature Cards */}
-        <div className="grid grid-cols-5 gap-4">
-          <Card className="group hover:shadow-md transition-all duration-200 hover:-translate-y-0.5 cursor-default">
-            <CardHeader className="pb-3">
-              <div className="flex items-center justify-center w-10 h-10 rounded-xl bg-blue-100 mb-3 group-hover:scale-110 transition-transform">
-                <FolderCode className="w-5 h-5 text-blue-600" />
-              </div>
-              <CardTitle className="text-base">Open Project</CardTitle>
-              <CardDescription className="text-sm">
-                Select a project folder and scan for API endpoints automatically
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="pt-0">
-              <div className="flex items-center text-xs text-blue-600 font-medium group-hover:gap-2 transition-all">
-                <span>Use header menu</span>
-                <ArrowRight className="w-3.5 h-3.5 opacity-0 group-hover:opacity-100 transition-opacity" />
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card className="group hover:shadow-md transition-all duration-200 hover:-translate-y-0.5 cursor-default">
-            <CardHeader className="pb-3">
-              <div className="flex items-center justify-center w-10 h-10 rounded-xl bg-emerald-100 mb-3 group-hover:scale-110 transition-transform">
-                <Code2 className="w-5 h-5 text-emerald-600" />
-              </div>
-              <CardTitle className="text-base">API Testing</CardTitle>
-              <CardDescription className="text-sm">
-                Test individual API endpoints with custom parameters and headers
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="pt-0">
-              <div className="flex items-center text-xs text-blue-600 font-medium group-hover:gap-2 transition-all">
-                <span>Select an endpoint</span>
-                <ArrowRight className="w-3.5 h-3.5 opacity-0 group-hover:opacity-100 transition-opacity" />
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card
-            className="group hover:shadow-md transition-all duration-200 hover:-translate-y-0.5 cursor-pointer"
-            onClick={onSelectScenarios}
-          >
-            <CardHeader className="pb-3">
-              <div className="flex items-center justify-center w-10 h-10 rounded-xl bg-violet-100 mb-3 group-hover:scale-110 transition-transform">
-                <FlaskConical className="w-5 h-5 text-violet-600" />
-              </div>
-              <CardTitle className="text-base">Test Scenarios</CardTitle>
-              <CardDescription className="text-sm">
-                Create multi-step test flows with assertions and variables
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="pt-0">
-              <div className="flex items-center text-xs text-blue-600 font-medium group-hover:gap-2 transition-all">
-                <span>Open scenarios</span>
-                <ArrowRight className="w-3.5 h-3.5 opacity-0 group-hover:opacity-100 transition-opacity" />
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card className="group hover:shadow-md transition-all duration-200 hover:-translate-y-0.5 cursor-default">
-            <CardHeader className="pb-3">
-              <div className="flex items-center justify-center w-10 h-10 rounded-xl bg-amber-100 mb-3 group-hover:scale-110 transition-transform">
-                <Layers className="w-5 h-5 text-amber-600" />
-              </div>
-              <CardTitle className="text-base">Test Suites</CardTitle>
-              <CardDescription className="text-sm">
-                Run multiple endpoints sequentially with automated testing
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="pt-0">
-              <div className="flex items-center text-xs text-blue-600 font-medium group-hover:gap-2 transition-all">
-                <span>Select a test suite</span>
-                <ArrowRight className="w-3.5 h-3.5 opacity-0 group-hover:opacity-100 transition-opacity" />
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card
-            className="group hover:shadow-md transition-all duration-200 hover:-translate-y-0.5 cursor-pointer"
-            onClick={onSelectSecurity}
-          >
-            <CardHeader className="pb-3">
-              <div className="flex items-center justify-center w-10 h-10 rounded-xl bg-cyan-100 mb-3 group-hover:scale-110 transition-transform">
-                <Shield className="w-5 h-5 text-cyan-600" />
-              </div>
-              <CardTitle className="text-base">Security Testing</CardTitle>
-              <CardDescription className="text-sm">
-                Scan APIs for SQL injection, XSS, and other vulnerabilities
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="pt-0">
-              <div className="flex items-center text-xs text-blue-600 font-medium group-hover:gap-2 transition-all">
-                <span>Open security panel</span>
-                <ArrowRight className="w-3.5 h-3.5 opacity-0 group-hover:opacity-100 transition-opacity" />
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card
-            className="group hover:shadow-md transition-all duration-200 hover:-translate-y-0.5 cursor-pointer"
-            onClick={onSelectDatabase}
-          >
-            <CardHeader className="pb-3">
-              <div className="flex items-center justify-center w-10 h-10 rounded-xl bg-violet-100 mb-3 group-hover:scale-110 transition-transform">
-                <Database className="w-5 h-5 text-violet-600" />
-              </div>
-              <CardTitle className="text-base">Database Queries</CardTitle>
-              <CardDescription className="text-sm">
-                Execute SQL queries and view results in table format
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="pt-0">
-              <div className="flex items-center text-xs text-blue-600 font-medium group-hover:gap-2 transition-all">
-                <span>Open database panel</span>
-                <ArrowRight className="w-3.5 h-3.5 opacity-0 group-hover:opacity-100 transition-opacity" />
-              </div>
-            </CardContent>
-          </Card>
-        </div>
-
-        {/* Tips */}
-        <div className="mt-10 text-center">
-          <p className="text-sm text-slate-400">
-            <span className="font-medium">Tip:</span> Open a project folder and click "Scan APIs" to automatically discover API endpoints
-          </p>
-        </div>
-      </div>
-    </div>
-  );
-}
 
 function AppContent() {
+  const [activeFeature, setActiveFeature] = useState<FeatureType | null>(null);
   const [selectedEndpoint, setSelectedEndpoint] = useState<APIEndpoint | null>(null);
-  const [selectedTestSuite, setSelectedTestSuite] = useState<TestSuite | null>(null);
-  const [viewMode, setViewMode] = useState<ViewMode>('welcome');
+  const [selectedScenario, setSelectedScenario] = useState<TestScenario | null>(null);
   const { currentProject } = useProject();
+
+  const handleSelectFeature = (feature: FeatureType) => {
+    setActiveFeature(feature);
+    // Reset selections when switching features
+    setSelectedEndpoint(null);
+    setSelectedScenario(null);
+  };
 
   const handleSelectEndpoint = (endpoint: APIEndpoint) => {
     setSelectedEndpoint(endpoint);
-    setViewMode('request');
   };
 
-  const handleSelectTestSuite = (suite: TestSuite) => {
-    setSelectedTestSuite(suite);
-    setViewMode('test-suite');
-  };
-
-  const handleSelectDatabase = () => {
-    setViewMode('database');
-  };
-
-  const handleSelectSecurity = () => {
-    setViewMode('security');
-  };
-
-  const handleSelectScenarios = () => {
-    setViewMode('scenario');
+  const handleSelectScenario = (scenario: TestScenario | null) => {
+    setSelectedScenario(scenario);
   };
 
   return (
@@ -215,54 +49,60 @@ function AppContent() {
       <Header />
       
       <div className="flex flex-1 overflow-hidden">
-        <Sidebar
-          onSelectEndpoint={handleSelectEndpoint}
-          onSelectTestSuite={handleSelectTestSuite}
-          onSelectDatabase={handleSelectDatabase}
-          onSelectScenarios={handleSelectScenarios}
-          selectedEndpointId={selectedEndpoint?.id}
+        <PrimaryNavigation
+          activeFeature={activeFeature}
+          onSelectFeature={handleSelectFeature}
         />
 
+        {activeFeature !== 'database' && (
+          <Sidebar
+            featureMode={activeFeature}
+            onSelectEndpoint={handleSelectEndpoint}
+            onSelectScenario={handleSelectScenario}
+            selectedEndpointId={selectedEndpoint?.id}
+            selectedScenario={selectedScenario}
+            projectId={currentProject?.id}
+          />
+        )}
+
         <main className="flex-1 overflow-hidden">
-          {viewMode === 'welcome' && (
-            <WelcomeScreen 
-              onSelectDatabase={handleSelectDatabase} 
-              onSelectSecurity={handleSelectSecurity}
-              onSelectScenarios={handleSelectScenarios}
-            />
-          )}
-
-          {viewMode === 'request' && selectedEndpoint && (
-            <RequestBuilder endpoint={selectedEndpoint} />
-          )}
-
-          {viewMode === 'test-suite' && selectedTestSuite && (
-            <TestSuiteRunner testSuite={selectedTestSuite} />
-          )}
-
-          {viewMode === 'database' && <DatabaseQueryPanel />}
-
-          {viewMode === 'security' && currentProject && (
-            <SecurityTestPanel
-              projectId={currentProject.id}
-              url=""
-              method="GET"
-              params={{}}
-              headers={{}}
-            />
-          )}
-
-          {viewMode === 'security' && !currentProject && (
-            <div className="flex items-center justify-center h-full text-gray-500">
-              Please select a project first to use Security Testing
+          {!activeFeature && (
+            <div className="h-full flex items-center justify-center bg-gradient-subtle">
+              <div className="text-center">
+                <h2 className="text-2xl font-semibold text-slate-900 mb-2">
+                  Welcome to API Tester
+                </h2>
+                <p className="text-slate-500">
+                  Select a feature from the left navigation to get started
+                </p>
+              </div>
             </div>
           )}
 
-          {viewMode === 'scenario' && currentProject && (
-            <ScenarioPanel projectId={currentProject.id} />
+          {activeFeature === 'api' && selectedEndpoint && (
+            <RequestBuilder endpoint={selectedEndpoint} />
           )}
 
-          {viewMode === 'scenario' && !currentProject && (
+          {activeFeature === 'api' && !selectedEndpoint && (
+            <div className="h-full flex items-center justify-center bg-slate-50">
+              <div className="text-center">
+                <p className="text-slate-500">
+                  Select an API endpoint from the sidebar to start testing
+                </p>
+              </div>
+            </div>
+          )}
+
+          {activeFeature === 'database' && <DatabaseQueryPanel />}
+
+          {activeFeature === 'scenario' && currentProject && (
+            <ScenarioPanel
+              projectId={currentProject.id}
+              selectedScenario={selectedScenario}
+            />
+          )}
+
+          {activeFeature === 'scenario' && !currentProject && (
             <div className="flex items-center justify-center h-full text-gray-500">
               Please select a project first to use Test Scenarios
             </div>

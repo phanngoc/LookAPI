@@ -392,13 +392,14 @@ export function ScenarioEditor({ scenario, onRunClick }: Props) {
 
         {/* Step Editor Panel */}
         {editingStep && (
-          <div className="w-[500px] bg-slate-50">
+          <div className="w-[500px] h-full bg-slate-50">
             <StepEditor
               step={editingStep}
               onClose={() => setEditingStep(null)}
               onSave={async (updates) => {
-                await updateStep(updates);
-                setEditingStep(null);
+                const updatedStep = await updateStep(updates);
+                // Update editingStep with the returned step from server
+                setEditingStep(updatedStep);
               }}
               projectId={scenario.projectId}
             />

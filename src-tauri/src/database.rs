@@ -775,6 +775,42 @@ pub fn get_test_scenario_steps(scenario_id: &str) -> Result<Vec<TestScenarioStep
     Ok(steps)
 }
 
+/// Get a test scenario step by ID
+pub fn get_test_scenario_step_by_id(step_id: &str) -> Result<Option<TestScenarioStep>, String> {
+    let conn = Connection::open(get_db_path())
+        .map_err(|e| format!("DB error: {}", e))?;
+
+    let mut stmt = conn.prepare(
+        "SELECT id, scenario_id, step_order, step_type, name, config, enabled 
+         FROM test_scenario_steps WHERE id = ?"
+    )
+    .map_err(|e| format!("Prepare error: {}", e))?;
+
+    let step_result = stmt.query_row([step_id], |row| {
+        let config_json: String = row.get(5)?;
+        let config: serde_json::Value = serde_json::from_str(&config_json)
+            .unwrap_or(serde_json::json!({}));
+        let step_type_str: String = row.get(3)?;
+        let enabled: i32 = row.get(6)?;
+
+        Ok(TestScenarioStep {
+            id: row.get(0)?,
+            scenario_id: row.get(1)?,
+            step_order: row.get(2)?,
+            step_type: TestStepType::from_str(&step_type_str),
+            name: row.get(4)?,
+            config,
+            enabled: enabled != 0,
+        })
+    });
+
+    match step_result {
+        Ok(step) => Ok(Some(step)),
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+        Err(e) => Err(format!("Query error: {}", e)),
+    }
+}
+
 /// Delete a test scenario step
 pub fn delete_test_scenario_step(step_id: &str) -> Result<(), String> {
     let conn = Connection::open(get_db_path())

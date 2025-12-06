@@ -346,19 +346,9 @@ pub async fn get_test_scenario_steps(
 pub async fn update_test_scenario_step(
     request: scenario::types::UpdateStepRequest,
 ) -> Result<scenario::types::TestScenarioStep, String> {
-    // Need to get the step from its scenario
-    let all_scenarios = database::get_test_scenarios_by_project("")?;
-    let mut found_step: Option<scenario::types::TestScenarioStep> = None;
-    
-    for scenario in &all_scenarios {
-        let steps = database::get_test_scenario_steps(&scenario.id)?;
-        if let Some(step) = steps.into_iter().find(|s| s.id == request.id) {
-            found_step = Some(step);
-            break;
-        }
-    }
-
-    let existing = found_step.ok_or_else(|| "Step not found".to_string())?;
+    // Get the step directly by ID
+    let existing = database::get_test_scenario_step_by_id(&request.id)?
+        .ok_or_else(|| "Step not found".to_string())?;
 
     let updated = scenario::types::TestScenarioStep {
         id: existing.id,
@@ -388,6 +378,7 @@ pub async fn reorder_test_scenario_steps(
 
 #[tauri::command]
 pub async fn run_test_scenario(
+    app: tauri::AppHandle,
     scenario_id: String,
 ) -> Result<scenario::types::TestScenarioRun, String> {
     let scenario = database::get_test_scenario(&scenario_id)?
@@ -395,7 +386,14 @@ pub async fn run_test_scenario(
     
     let steps = database::get_test_scenario_steps(&scenario_id)?;
     
-    let run = scenario::executor::run_scenario(&scenario, &steps);
+    // Run scenario in a spawned task to avoid blocking
+    let app_clone = app.clone();
+    let run = tauri::async_runtime::spawn_blocking(move || {
+        scenario::executor::run_scenario(&scenario, &steps, Some(&app_clone))
+    })
+    .await
+    .map_err(|e| format!("Failed to execute scenario: {}", e))?;
+    
     database::save_test_scenario_run(&run)?;
     
     Ok(run)

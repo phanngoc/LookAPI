@@ -5,7 +5,6 @@ import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Separator } from '@/components/ui/separator';
-import { cn } from '@/lib/utils';
 import {
   Select,
   SelectContent,
@@ -26,7 +25,6 @@ import {
   EXTRACTOR_SOURCES,
 } from '@/types/scenario';
 import { useEndpoints } from '@/hooks/useEndpoints';
-import { APIEndpoint } from '@/types/api';
 
 interface Props {
   step: TestScenarioStep;
@@ -61,11 +59,22 @@ export function StepEditor({ step, onClose, onSave, projectId }: Props) {
   const handleSave = async () => {
     setIsSaving(true);
     try {
-      await onSave({
+      const updates: UpdateStepRequest = {
         id: step.id,
-        name,
-        config,
-      });
+      };
+
+      // Include name (use current value, trimmed)
+      const trimmedName = name?.trim();
+      if (trimmedName) {
+        updates.name = trimmedName;
+      }
+
+      // Include config if it exists
+      if (config) {
+        updates.config = config;
+      }
+
+      await onSave(updates);
     } catch (e) {
       console.error('Failed to save step:', e);
     } finally {

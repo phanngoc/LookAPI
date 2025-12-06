@@ -1,10 +1,4 @@
 import { useState } from 'react';
-import {
-  ResizablePanelGroup,
-  ResizablePanel,
-  ResizableHandle,
-} from '@/components/ui/resizable';
-import { ScenarioList } from './ScenarioList';
 import { ScenarioEditor } from './ScenarioEditor';
 import { ScenarioRunner } from './ScenarioRunner';
 import { TestScenario } from '@/types/scenario';
@@ -12,10 +6,10 @@ import { FlaskConical } from 'lucide-react';
 
 interface Props {
   projectId: string;
+  selectedScenario: TestScenario | null;
 }
 
-export function ScenarioPanel({ projectId }: Props) {
-  const [selectedScenario, setSelectedScenario] = useState<TestScenario | null>(null);
+export function ScenarioPanel({ projectId, selectedScenario }: Props) {
   const [mode, setMode] = useState<'edit' | 'run'>('edit');
 
   return (
@@ -36,49 +30,35 @@ export function ScenarioPanel({ projectId }: Props) {
       </div>
 
       {/* Main Content */}
-      <ResizablePanelGroup direction="horizontal" className="flex-1">
-        {/* Scenario List */}
-        <ResizablePanel defaultSize={30} minSize={20}>
-          <ScenarioList
-            projectId={projectId}
-            selectedScenario={selectedScenario}
-            onSelectScenario={setSelectedScenario}
-          />
-        </ResizablePanel>
-
-        <ResizableHandle withHandle />
-
-        {/* Scenario Editor / Runner */}
-        <ResizablePanel defaultSize={70} minSize={40}>
-          {selectedScenario ? (
-            mode === 'edit' ? (
-              <ScenarioEditor
-                scenario={selectedScenario}
-                onRunClick={() => setMode('run')}
-              />
-            ) : (
-              <ScenarioRunner
-                scenario={selectedScenario}
-                onEditClick={() => setMode('edit')}
-              />
-            )
+      <div className="flex-1 overflow-hidden">
+        {selectedScenario ? (
+          mode === 'edit' ? (
+            <ScenarioEditor
+              scenario={selectedScenario}
+              onRunClick={() => setMode('run')}
+            />
           ) : (
-            <div className="h-full flex items-center justify-center bg-slate-50">
-              <div className="text-center">
-                <div className="mx-auto w-12 h-12 rounded-full bg-slate-100 flex items-center justify-center mb-3">
-                  <FlaskConical className="w-6 h-6 text-slate-400" />
-                </div>
-                <h3 className="text-base font-medium text-slate-900 mb-1">
-                  No Scenario Selected
-                </h3>
-                <p className="text-sm text-slate-500">
-                  Select or create a test scenario to get started
-                </p>
+            <ScenarioRunner
+              scenario={selectedScenario}
+              onEditClick={() => setMode('edit')}
+            />
+          )
+        ) : (
+          <div className="h-full flex items-center justify-center bg-slate-50">
+            <div className="text-center">
+              <div className="mx-auto w-12 h-12 rounded-full bg-slate-100 flex items-center justify-center mb-3">
+                <FlaskConical className="w-6 h-6 text-slate-400" />
               </div>
+              <h3 className="text-base font-medium text-slate-900 mb-1">
+                No Scenario Selected
+              </h3>
+              <p className="text-sm text-slate-500">
+                Select or create a test scenario from the sidebar to get started
+              </p>
             </div>
-          )}
-        </ResizablePanel>
-      </ResizablePanelGroup>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

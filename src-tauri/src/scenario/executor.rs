@@ -3,6 +3,7 @@ use reqwest::blocking::Client;
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 use regex::Regex;
+use tauri::{AppHandle, Emitter};
 
 /// Scenario Executor - Executes test scenarios step by step
 pub struct ScenarioExecutor {
@@ -35,6 +36,7 @@ impl ScenarioExecutor {
         &mut self,
         scenario: &TestScenario,
         steps: &[TestScenarioStep],
+        app_handle: Option<&AppHandle>,
     ) -> TestScenarioRun {
         let run_id = uuid::Uuid::new_v4().to_string();
         let started_at = chrono::Utc::now().timestamp();
@@ -47,17 +49,47 @@ impl ScenarioExecutor {
             }
         }
 
+        // Filter enabled steps and sort by order
+        let mut enabled_steps: Vec<_> = steps.iter().filter(|s| s.enabled).collect();
+        enabled_steps.sort_by_key(|s| s.step_order);
+        let total_steps = enabled_steps.len() as u32;
+
+        // Emit scenario started event
+        if let Some(app) = app_handle {
+            let _ = app.emit(
+                "scenario-started",
+                ScenarioStartedEvent {
+                    run_id: run_id.clone(),
+                    scenario_id: scenario.id.clone(),
+                    total_steps,
+                    started_at,
+                },
+            );
+        }
+
         let mut results = Vec::new();
         let mut passed_steps = 0u32;
         let mut failed_steps = 0u32;
         let mut skipped_steps = 0u32;
         let mut error_message: Option<String> = None;
 
-        // Filter enabled steps and sort by order
-        let mut enabled_steps: Vec<_> = steps.iter().filter(|s| s.enabled).collect();
-        enabled_steps.sort_by_key(|s| s.step_order);
+        for (index, step) in enabled_steps.iter().enumerate() {
+            let step_index = index as u32;
 
-        for step in enabled_steps {
+            // Emit step started event
+            if let Some(app) = app_handle {
+                let _ = app.emit(
+                    "step-started",
+                    StepStartedEvent {
+                        run_id: run_id.clone(),
+                        step_id: step.id.clone(),
+                        step_index,
+                        step_name: step.name.clone(),
+                        step_type: step.step_type.as_str().to_string(),
+                    },
+                );
+            }
+
             let step_result = self.execute_step(step);
             
             match step_result.status {
@@ -85,7 +117,24 @@ impl ScenarioExecutor {
                 }
             }
 
-            results.push(step_result);
+            results.push(step_result.clone());
+
+            // Emit step completed event
+            if let Some(app) = app_handle {
+                let completed_count = (index + 1) as u32;
+                let progress_percentage = (completed_count as f64 / total_steps as f64) * 100.0;
+                let _ = app.emit(
+                    "step-completed",
+                    StepCompletedEvent {
+                        run_id: run_id.clone(),
+                        step_id: step.id.clone(),
+                        step_index,
+                        status: step_result.status.as_str().to_string(),
+                        result: step_result,
+                        progress_percentage,
+                    },
+                );
+            }
         }
 
         let duration_ms = start_time.elapsed().as_millis() as u64;
@@ -97,8 +146,8 @@ impl ScenarioExecutor {
             ScenarioRunStatus::Passed
         };
 
-        TestScenarioRun {
-            id: run_id,
+        let run = TestScenarioRun {
+            id: run_id.clone(),
             scenario_id: scenario.id.clone(),
             status,
             total_steps: results.len() as u32,
@@ -111,7 +160,17 @@ impl ScenarioExecutor {
             error_message,
             results,
             variables: self.variables.clone(),
+        };
+
+        // Emit scenario completed event
+        if let Some(app) = app_handle {
+            let _ = app.emit("scenario-completed", ScenarioCompletedEvent {
+                run_id: run_id.clone(),
+                run: run.clone(),
+            });
         }
+
+        run
     }
 
     /// Execute a single step
@@ -609,8 +668,9 @@ impl ScenarioExecutor {
 pub fn run_scenario(
     scenario: &TestScenario,
     steps: &[TestScenarioStep],
+    app_handle: Option<&AppHandle>,
 ) -> TestScenarioRun {
     let mut executor = ScenarioExecutor::new();
-    executor.execute_scenario(scenario, steps)
+    executor.execute_scenario(scenario, steps, app_handle)
 }
 

@@ -238,3 +238,33 @@ export const DEFAULT_LOOP_CONFIG: LoopStepConfig = {
   steps: [],
 };
 
+// Event payload types for real-time progress updates
+export interface ScenarioStartedEvent {
+  runId: string;
+  scenarioId: string;
+  totalSteps: number;
+  startedAt: number;
+}
+
+export interface StepStartedEvent {
+  runId: string;
+  stepId: string;
+  stepIndex: number;
+  stepName: string;
+  stepType: string;
+}
+
+export interface StepCompletedEvent {
+  runId: string;
+  stepId: string;
+  stepIndex: number;
+  status: string;
+  result: TestStepResult;
+  progressPercentage: number;
+}
+
+export interface ScenarioCompletedEvent {
+  runId: string;
+  run: TestScenarioRun;
+}
+

@@ -289,6 +289,54 @@ pub struct StepResponse {
     pub duration_ms: u64,
 }
 
+/// Event payloads for real-time progress updates
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct ScenarioStartedEvent {
+    #[serde(rename = "runId")]
+    pub run_id: String,
+    #[serde(rename = "scenarioId")]
+    pub scenario_id: String,
+    #[serde(rename = "totalSteps")]
+    pub total_steps: u32,
+    #[serde(rename = "startedAt")]
+    pub started_at: i64,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct StepStartedEvent {
+    #[serde(rename = "runId")]
+    pub run_id: String,
+    #[serde(rename = "stepId")]
+    pub step_id: String,
+    #[serde(rename = "stepIndex")]
+    pub step_index: u32,
+    #[serde(rename = "stepName")]
+    pub step_name: String,
+    #[serde(rename = "stepType")]
+    pub step_type: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct StepCompletedEvent {
+    #[serde(rename = "runId")]
+    pub run_id: String,
+    #[serde(rename = "stepId")]
+    pub step_id: String,
+    #[serde(rename = "stepIndex")]
+    pub step_index: u32,
+    pub status: String,
+    pub result: TestStepResult,
+    #[serde(rename = "progressPercentage")]
+    pub progress_percentage: f64,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct ScenarioCompletedEvent {
+    #[serde(rename = "runId")]
+    pub run_id: String,
+    pub run: TestScenarioRun,
+}
+
 /// Create Scenario Request
 #[derive(Debug, Serialize, Deserialize)]
 pub struct CreateScenarioRequest {

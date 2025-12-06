@@ -121,7 +121,13 @@ export function useTestScenarioSteps(scenarioId: string) {
 
   const updateStepMutation = useMutation({
     mutationFn: (request: UpdateStepRequest) => tauriService.updateTestScenarioStep(request),
-    onSuccess: () => {
+    onSuccess: (updatedStep) => {
+      // Optimistically update the cache with the returned step
+      queryClient.setQueryData<typeof steps>(
+        ['testScenarioSteps', scenarioId],
+        (oldSteps) => oldSteps?.map((s) => (s.id === updatedStep.id ? updatedStep : s)) ?? []
+      );
+      // Still invalidate to ensure consistency
       queryClient.invalidateQueries({ queryKey: ['testScenarioSteps', scenarioId] });
     },
   });
