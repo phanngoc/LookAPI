@@ -9,6 +9,8 @@ pub struct Project {
     pub created_at: i64,
     #[serde(rename = "lastScanned")]
     pub last_scanned: Option<i64>,
+    #[serde(rename = "baseUrl")]
+    pub base_url: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

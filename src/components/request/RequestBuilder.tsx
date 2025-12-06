@@ -15,19 +15,22 @@ import { ResponseViewer } from '@/components/response/ResponseViewer';
 import { APIEndpoint, APIResponse } from '@/types/api';
 import { tauriService } from '@/services/tauri';
 import { useEnvironment } from '@/contexts/EnvironmentContext';
+import { useProject } from '@/contexts/ProjectContext';
 import { toast } from '@/hooks/use-toast';
 import {
   ResizablePanelGroup,
   ResizablePanel,
   ResizableHandle,
 } from '@/components/ui/resizable';
+import { getBaseUrlForProject, buildFullUrl } from '@/utils/url';
 
 interface RequestBuilderProps {
   endpoint: APIEndpoint;
 }
 
 export function RequestBuilder({ endpoint }: RequestBuilderProps) {
-  const { resolveVariables, activeEnvironment } = useEnvironment();
+  const { resolveVariables, activeEnvironment, getVariable } = useEnvironment();
+  const { currentProject } = useProject();
   const [method, setMethod] = useState<string>(endpoint.method);
   const [url, setUrl] = useState('');
   const [bodyJson, setBodyJson] = useState('');
@@ -43,11 +46,10 @@ export function RequestBuilder({ endpoint }: RequestBuilderProps) {
     if (endpoint) {
       setMethod(endpoint.method);
       
-      // Build URL from environment
-      const baseUrl = endpoint.service === 'dccard'
-        ? 'http://localhost:8082'
-        : 'http://localhost:8080';
-      setUrl(`${baseUrl}${endpoint.path}`);
+      // Build URL from project settings or environment
+      const envBaseUrl = getVariable('BASE_URL');
+      const baseUrl = getBaseUrlForProject(currentProject, envBaseUrl, endpoint.service);
+      setUrl(buildFullUrl(baseUrl, endpoint.path));
 
       // Build body from parameters
       const params = endpoint.parameters.reduce((acc, param) => {
@@ -60,7 +62,7 @@ export function RequestBuilder({ endpoint }: RequestBuilderProps) {
       setError(null);
       setCurlCommand('');
     }
-  }, [endpoint]);
+  }, [endpoint, currentProject, getVariable]);
 
   const handleReset = () => {
     const params = endpoint.parameters.reduce((acc, param) => {

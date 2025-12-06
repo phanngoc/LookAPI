@@ -15,6 +15,7 @@ interface ProjectContextType {
   deleteProject: (projectId: string) => Promise<void>;
   scanProject: () => Promise<APIEndpoint[]>;
   refreshProjects: () => Promise<void>;
+  updateProjectBaseUrl: (projectId: string, baseUrl: string | null) => Promise<void>;
 }
 
 const ProjectContext = createContext<ProjectContextType | undefined>(undefined);
@@ -154,6 +155,28 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
     }
   }, [currentProject, queryClient]);
 
+  const updateProjectBaseUrl = useCallback(async (projectId: string, baseUrl: string | null): Promise<void> => {
+    try {
+      setError(null);
+      await tauriService.updateProjectBaseUrl(projectId, baseUrl);
+      
+      // Update local state
+      const updatedBaseUrl = baseUrl || undefined;
+      setProjects(prev => prev.map(p => 
+        p.id === projectId ? { ...p, baseUrl: updatedBaseUrl } : p
+      ));
+      
+      // Update currentProject if it's the one being modified
+      if (currentProject?.id === projectId) {
+        setCurrentProject(prev => prev ? { ...prev, baseUrl: updatedBaseUrl } : null);
+      }
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : 'Failed to update base URL';
+      setError(errorMsg);
+      throw new Error(errorMsg);
+    }
+  }, [currentProject]);
+
   return (
     <ProjectContext.Provider
       value={{
@@ -168,6 +191,7 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
         deleteProject,
         scanProject,
         refreshProjects,
+        updateProjectBaseUrl,
       }}
     >
       {children}

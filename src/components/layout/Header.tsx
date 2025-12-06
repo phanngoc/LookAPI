@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { Zap, Settings, Globe } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
@@ -15,9 +16,11 @@ import {
 } from '@/components/ui/tooltip';
 import { useEnvironment } from '@/contexts/EnvironmentContext';
 import { ProjectSelector } from '@/components/project/ProjectSelector';
+import { SettingsDialog } from '@/components/settings/SettingsDialog';
 
 export function Header() {
   const { environments, activeEnvironment, setActiveEnvironment } = useEnvironment();
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   const handleEnvironmentChange = (envId: string) => {
     const env = environments.find((e) => e.id === envId);
@@ -94,7 +97,12 @@ export function Header() {
         <TooltipProvider>
           <Tooltip>
             <TooltipTrigger asChild>
-              <Button variant="ghost" size="icon" className="h-8 w-8">
+              <Button 
+                variant="ghost" 
+                size="icon" 
+                className="h-8 w-8"
+                onClick={() => setSettingsOpen(true)}
+              >
                 <Settings className="w-4 h-4" />
               </Button>
             </TooltipTrigger>
@@ -104,6 +112,8 @@ export function Header() {
           </Tooltip>
         </TooltipProvider>
       </div>
+
+      <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
     </header>
   );
 }

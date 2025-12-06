@@ -4,6 +4,7 @@ export interface Project {
   path: string;
   createdAt: number;
   lastScanned: number | null;
+  baseUrl?: string;
 }
 
 export interface APIEndpoint {

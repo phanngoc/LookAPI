@@ -31,6 +31,7 @@ pub fn run() {
             commands::create_project,
             commands::get_all_projects,
             commands::delete_project,
+            commands::update_project_base_url,
             commands::get_endpoints_by_project,
             // Security testing commands
             commands::create_security_test_case,

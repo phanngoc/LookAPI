@@ -50,6 +50,9 @@ pub fn init_database() -> Result<()> {
     // Add project_id column if it doesn't exist (migration for existing databases)
     let _ = conn.execute("ALTER TABLE endpoints ADD COLUMN project_id TEXT", []);
 
+    // Add base_url column to projects table if it doesn't exist (migration)
+    let _ = conn.execute("ALTER TABLE projects ADD COLUMN base_url TEXT", []);
+
     conn.execute(
         "CREATE TABLE IF NOT EXISTS test_suites (
             id TEXT PRIMARY KEY,
@@ -222,14 +225,15 @@ pub fn save_project(project: Project) -> Result<(), String> {
         .map_err(|e| format!("DB error: {}", e))?;
 
     conn.execute(
-        "INSERT OR REPLACE INTO projects (id, name, path, created_at, last_scanned)
-        VALUES (?, ?, ?, ?, ?)",
+        "INSERT OR REPLACE INTO projects (id, name, path, created_at, last_scanned, base_url)
+        VALUES (?, ?, ?, ?, ?, ?)",
         rusqlite::params![
             project.id,
             project.name,
             project.path,
             project.created_at,
-            project.last_scanned
+            project.last_scanned,
+            project.base_url
         ],
     )
     .map_err(|e| format!("Insert error: {}", e))?;
@@ -241,7 +245,7 @@ pub fn get_all_projects() -> Result<Vec<Project>, String> {
     let conn = Connection::open(get_db_path())
         .map_err(|e| format!("DB connection error: {}", e))?;
 
-    let mut stmt = conn.prepare("SELECT id, name, path, created_at, last_scanned FROM projects ORDER BY created_at DESC")
+    let mut stmt = conn.prepare("SELECT id, name, path, created_at, last_scanned, base_url FROM projects ORDER BY created_at DESC")
         .map_err(|e| format!("Prepare error: {}", e))?;
 
     let projects = stmt.query_map([], |row| {
@@ -251,6 +255,7 @@ pub fn get_all_projects() -> Result<Vec<Project>, String> {
             path: row.get(2)?,
             created_at: row.get(3)?,
             last_scanned: row.get(4)?,
+            base_url: row.get(5)?,
         })
     })
     .map_err(|e| format!("Query error: {}", e))?
@@ -338,6 +343,19 @@ pub fn update_project_last_scanned(project_id: &str) -> Result<(), String> {
     conn.execute(
         "UPDATE projects SET last_scanned = ? WHERE id = ?",
         rusqlite::params![now, project_id],
+    )
+    .map_err(|e| format!("Update error: {}", e))?;
+
+    Ok(())
+}
+
+pub fn update_project_base_url(project_id: &str, base_url: Option<String>) -> Result<(), String> {
+    let conn = Connection::open(get_db_path())
+        .map_err(|e| format!("DB error: {}", e))?;
+
+    conn.execute(
+        "UPDATE projects SET base_url = ? WHERE id = ?",
+        rusqlite::params![base_url, project_id],
     )
     .map_err(|e| format!("Update error: {}", e))?;
 

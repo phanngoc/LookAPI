@@ -9,7 +9,7 @@ interface Props {
   selectedScenario: TestScenario | null;
 }
 
-export function ScenarioPanel({ projectId, selectedScenario }: Props) {
+export function ScenarioPanel({ projectId: _projectId, selectedScenario }: Props) {
   const [mode, setMode] = useState<'edit' | 'run'>('edit');
 
   return (

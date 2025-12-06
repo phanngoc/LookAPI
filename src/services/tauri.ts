@@ -57,6 +57,10 @@ export const tauriService = {
     return invoke('delete_project', { projectId });
   },
 
+  async updateProjectBaseUrl(projectId: string, baseUrl: string | null): Promise<void> {
+    return invoke('update_project_base_url', { projectId, baseUrl });
+  },
+
   async getEndpointsByProject(projectId: string): Promise<APIEndpoint[]> {
     return invoke('get_endpoints_by_project', { projectId });
   },

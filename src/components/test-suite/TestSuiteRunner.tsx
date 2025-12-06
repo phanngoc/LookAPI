@@ -20,6 +20,8 @@ import { StatusBadge } from '@/components/shared/StatusBadge';
 import { CodeEditor } from '@/components/shared/CodeEditor';
 import { TestSuite, APIEndpoint, APIResponse } from '@/types/api';
 import { useEndpoints } from '@/hooks/useEndpoints';
+import { useProject } from '@/contexts/ProjectContext';
+import { useEnvironment } from '@/contexts/EnvironmentContext';
 import { tauriService } from '@/services/tauri';
 import { cn } from '@/lib/utils';
 import {
@@ -27,6 +29,7 @@ import {
   ResizablePanel,
   ResizableHandle,
 } from '@/components/ui/resizable';
+import { getBaseUrlForProject, buildFullUrl } from '@/utils/url';
 
 interface TestSuiteRunnerProps {
   testSuite: TestSuite;
@@ -43,6 +46,8 @@ interface TestResult {
 
 export function TestSuiteRunner({ testSuite }: TestSuiteRunnerProps) {
   const { endpoints } = useEndpoints();
+  const { currentProject } = useProject();
+  const { getVariable } = useEnvironment();
   const [results, setResults] = useState<TestResult[]>([]);
   const [isRunning, setIsRunning] = useState(false);
   const [isPaused, setIsPaused] = useState(false);
@@ -76,7 +81,10 @@ export function TestSuiteRunner({ testSuite }: TestSuiteRunnerProps) {
       return acc;
     }, {} as Record<string, unknown>);
 
-    const url = `${endpoint.service === 'dccard' ? 'http://localhost:8082' : 'http://localhost:8080'}${endpoint.path}`;
+    // Use project base URL settings
+    const envBaseUrl = getVariable('BASE_URL');
+    const baseUrl = getBaseUrlForProject(currentProject, envBaseUrl, endpoint.service);
+    const url = buildFullUrl(baseUrl, endpoint.path);
 
     const request = {
       endpoint: url,

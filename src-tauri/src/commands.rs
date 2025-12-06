@@ -82,6 +82,7 @@ pub async fn create_project(path: String) -> Result<Project, String> {
         path,
         created_at: chrono::Utc::now().timestamp(),
         last_scanned: None,
+        base_url: None,
     };
     
     database::save_project(project.clone())
@@ -98,6 +99,11 @@ pub async fn get_all_projects() -> Result<Vec<Project>, String> {
 #[tauri::command]
 pub async fn delete_project(project_id: String) -> Result<(), String> {
     database::delete_project(project_id)
+}
+
+#[tauri::command]
+pub async fn update_project_base_url(project_id: String, base_url: Option<String>) -> Result<(), String> {
+    database::update_project_base_url(&project_id, base_url)
 }
 
 #[tauri::command]
