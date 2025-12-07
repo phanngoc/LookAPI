@@ -15,12 +15,20 @@ pub struct ScenarioExecutor {
 
 impl ScenarioExecutor {
     pub fn new() -> Self {
+        log::info!("[Executor] Creating ScenarioExecutor with timeout: 30s");
+        let client = Client::builder()
+            .timeout(Duration::from_secs(30))
+            .danger_accept_invalid_certs(true)
+            .build()
+            .unwrap_or_else(|e| {
+                log::error!("[Executor] Failed to create client: {}", e);
+                log::error!("[Executor] Error chain: {}", get_error_chain(&e));
+                log::warn!("[Executor] Using default client");
+                Client::new()
+            });
+        log::info!("[Executor] Client created successfully");
         Self {
-            client: Client::builder()
-                .timeout(Duration::from_secs(30))
-                .danger_accept_invalid_certs(true)
-                .build()
-                .unwrap_or_default(),
+            client,
             variables: HashMap::new(),
             timeout: Duration::from_secs(30),
         }
@@ -42,17 +50,25 @@ impl ScenarioExecutor {
         let started_at = chrono::Utc::now().timestamp();
         let start_time = Instant::now();
 
+        log::info!("[Executor] Starting scenario execution: {} (ID: {})", scenario.name, scenario.id);
+        log::debug!("[Executor] Scenario ID: {}, Run ID: {}", scenario.id, run_id);
+
         // Initialize variables from scenario
         if let Some(vars) = scenario.variables.as_object() {
+            log::debug!("[Executor] Initializing {} variables from scenario", vars.len());
             for (k, v) in vars {
+                log::debug!("[Executor] Variable: {} = {:?}", k, v);
                 self.variables.insert(k.clone(), v.clone());
             }
+        } else {
+            log::debug!("[Executor] No variables defined in scenario");
         }
 
         // Filter enabled steps and sort by order
         let mut enabled_steps: Vec<_> = steps.iter().filter(|s| s.enabled).collect();
         enabled_steps.sort_by_key(|s| s.step_order);
         let total_steps = enabled_steps.len() as u32;
+        log::info!("[Executor] Total enabled steps: {} (out of {})", total_steps, steps.len());
 
         // Emit scenario started event
         if let Some(app) = app_handle {
@@ -76,6 +92,9 @@ impl ScenarioExecutor {
         for (index, step) in enabled_steps.iter().enumerate() {
             let step_index = index as u32;
 
+            log::info!("[Executor] Executing step {}/{}: {} ({})", 
+                step_index + 1, total_steps, step.name, step.step_type.as_str());
+
             // Emit step started event
             if let Some(app) = app_handle {
                 let _ = app.emit(
@@ -93,16 +112,25 @@ impl ScenarioExecutor {
             let step_result = self.execute_step(step);
             
             match step_result.status {
-                StepResultStatus::Passed => passed_steps += 1,
+                StepResultStatus::Passed => {
+                    passed_steps += 1;
+                    log::info!("[Executor] Step {} passed (duration: {}ms)", step.name, 
+                        step_result.duration_ms.unwrap_or(0));
+                },
                 StepResultStatus::Failed => {
                     failed_steps += 1;
+                    log::warn!("[Executor] Step {} failed: {:?}", step.name, step_result.error);
                     if error_message.is_none() {
                         error_message = step_result.error.clone();
                     }
                 }
-                StepResultStatus::Skipped => skipped_steps += 1,
+                StepResultStatus::Skipped => {
+                    skipped_steps += 1;
+                    log::info!("[Executor] Step {} skipped", step.name);
+                },
                 StepResultStatus::Error => {
                     failed_steps += 1;
+                    log::error!("[Executor] Step {} error: {:?}", step.name, step_result.error);
                     if error_message.is_none() {
                         error_message = step_result.error.clone();
                     }
@@ -141,8 +169,12 @@ impl ScenarioExecutor {
         let completed_at = chrono::Utc::now().timestamp();
 
         let status = if failed_steps > 0 {
+            log::warn!("[Executor] Scenario completed with failures: {}/{} passed, {}/{} failed", 
+                passed_steps, total_steps, failed_steps, total_steps);
             ScenarioRunStatus::Failed
         } else {
+            log::info!("[Executor] Scenario completed successfully: {}/{} passed ({}ms)", 
+                passed_steps, total_steps, duration_ms);
             ScenarioRunStatus::Passed
         };
 
@@ -176,16 +208,33 @@ impl ScenarioExecutor {
     /// Execute a single step
     fn execute_step(&mut self, step: &TestScenarioStep) -> TestStepResult {
         let start_time = Instant::now();
+        log::debug!("[Executor] Executing step: {} (type: {:?})", step.name, step.step_type);
 
         let result = match step.step_type {
-            TestStepType::Request => self.execute_request_step(step),
-            TestStepType::Delay => self.execute_delay_step(step),
-            TestStepType::Script => self.execute_script_step(step),
-            TestStepType::Condition => self.execute_condition_step(step),
-            TestStepType::Loop => self.execute_loop_step(step),
+            TestStepType::Request => {
+                log::debug!("[Executor] Step type: Request");
+                self.execute_request_step(step)
+            },
+            TestStepType::Delay => {
+                log::debug!("[Executor] Step type: Delay");
+                self.execute_delay_step(step)
+            },
+            TestStepType::Script => {
+                log::debug!("[Executor] Step type: Script");
+                self.execute_script_step(step)
+            },
+            TestStepType::Condition => {
+                log::debug!("[Executor] Step type: Condition");
+                self.execute_condition_step(step)
+            },
+            TestStepType::Loop => {
+                log::debug!("[Executor] Step type: Loop");
+                self.execute_loop_step(step)
+            },
         };
 
         let duration_ms = start_time.elapsed().as_millis() as u64;
+        log::debug!("[Executor] Step {} completed in {}ms", step.name, duration_ms);
 
         TestStepResult {
             step_id: step.id.clone(),
@@ -198,9 +247,17 @@ impl ScenarioExecutor {
 
     /// Execute a request step
     fn execute_request_step(&mut self, step: &TestScenarioStep) -> TestStepResult {
+        log::info!("[Executor] Executing request step: {}", step.name);
+        
         let config: RequestStepConfig = match serde_json::from_value(step.config.clone()) {
-            Ok(c) => c,
+            Ok(c) => {
+                log::debug!("[Executor] Step config parsed successfully");
+                c
+            },
             Err(e) => {
+                let error_msg = format!("Invalid step config: {}", e);
+                log::error!("[Executor] Failed to parse step config: {}", error_msg);
+                log::error!("[Executor] Error chain: {}", get_error_chain(&e));
                 return TestStepResult {
                     step_id: step.id.clone(),
                     name: step.name.clone(),
@@ -209,17 +266,26 @@ impl ScenarioExecutor {
                     duration_ms: None,
                     response: None,
                     assertions: None,
-                    error: Some(format!("Invalid step config: {}", e)),
+                    error: Some(error_msg),
                     extracted_variables: None,
                 };
             }
         };
 
         // Resolve variables in URL
+        let original_url = config.url.clone();
         let url = self.resolve_variables(&config.url);
         let method = config.method.to_uppercase();
+        
+        if original_url != url {
+            log::debug!("[Executor] URL after variable resolution: {} -> {}", original_url, url);
+        } else {
+            log::debug!("[Executor] Request URL: {}", url);
+        }
+        log::info!("[Executor] Request: {} {}", method, url);
 
         // Build request
+        log::debug!("[Executor] Building {} request", method);
         let mut req = match method.as_str() {
             "GET" => self.client.get(&url),
             "POST" => self.client.post(&url),
@@ -227,6 +293,8 @@ impl ScenarioExecutor {
             "DELETE" => self.client.delete(&url),
             "PATCH" => self.client.patch(&url),
             _ => {
+                let error_msg = format!("Unsupported method: {}", method);
+                log::error!("[Executor] {}", error_msg);
                 return TestStepResult {
                     step_id: step.id.clone(),
                     name: step.name.clone(),
@@ -235,7 +303,7 @@ impl ScenarioExecutor {
                     duration_ms: None,
                     response: None,
                     assertions: None,
-                    error: Some(format!("Unsupported method: {}", method)),
+                    error: Some(error_msg),
                     extracted_variables: None,
                 };
             }
@@ -243,37 +311,67 @@ impl ScenarioExecutor {
 
         // Add headers with variable resolution
         if let Some(headers) = &config.headers {
+            log::debug!("[Executor] Adding {} headers", headers.len());
             for (k, v) in headers {
                 let resolved_value = self.resolve_variables(v);
+                log::debug!("[Executor] Header: {} = {}", k, resolved_value);
                 req = req.header(k, resolved_value);
             }
+        } else {
+            log::debug!("[Executor] No custom headers provided");
         }
 
         // Add body with variable resolution
         if method != "GET" {
             if let Some(body) = &config.body {
                 let resolved_body = self.resolve_variables_in_json(body);
+                log::debug!("[Executor] Adding JSON body: {}", 
+                    serde_json::to_string(&resolved_body).unwrap_or_else(|_| "invalid json".to_string()));
                 req = req.json(&resolved_body);
             } else if let Some(params) = &config.params {
                 let resolved_params = self.resolve_variables_in_json(params);
+                log::debug!("[Executor] Adding JSON params: {}", 
+                    serde_json::to_string(&resolved_params).unwrap_or_else(|_| "invalid json".to_string()));
                 req = req.json(&resolved_params);
+            } else {
+                log::debug!("[Executor] No body or params for {} request", method);
             }
         }
 
         // Execute request
+        log::info!("[Executor] Sending {} request to {}", method, url);
         let start = Instant::now();
         let response = match req.send() {
-            Ok(resp) => resp,
+            Ok(resp) => {
+                let send_duration = start.elapsed().as_millis() as u64;
+                log::info!("[Executor] Request sent successfully (took {}ms)", send_duration);
+                resp
+            },
             Err(e) => {
+                let duration_ms = start.elapsed().as_millis() as u64;
+                let error_msg = format!("Request failed: {}", e);
+                log::error!("[Executor] Request failed after {}ms: {}", duration_ms, error_msg);
+                log::error!("[Executor] Error chain: {}", get_error_chain(&e));
+                log::error!("[Executor] Request URL: {}", url);
+                log::error!("[Executor] Request method: {}", method);
+                
+                // Check if it's a timeout
+                if e.is_timeout() {
+                    log::warn!("[Executor] Request timeout after {}ms", duration_ms);
+                }
+                if e.is_connect() {
+                    log::error!("[Executor] Connection error - server may be unreachable");
+                }
+                
                 return TestStepResult {
                     step_id: step.id.clone(),
                     name: step.name.clone(),
                     step_type: step.step_type.clone(),
                     status: StepResultStatus::Error,
-                    duration_ms: Some(start.elapsed().as_millis() as u64),
+                    duration_ms: Some(duration_ms),
                     response: None,
                     assertions: None,
-                    error: Some(format!("Request failed: {}", e)),
+                    error: Some(error_msg),
                     extracted_variables: None,
                 };
             }
@@ -283,16 +381,25 @@ impl ScenarioExecutor {
         let status_code = response.status().as_u16();
         let status_text = response.status().to_string();
         
+        log::info!("[Executor] Response received: {} {} (duration: {}ms)", status_code, status_text, duration_ms);
+        
         let mut response_headers = HashMap::new();
         for (k, v) in response.headers() {
             if let Ok(value) = v.to_str() {
+                log::debug!("[Executor] Response header: {} = {}", k, value);
                 response_headers.insert(k.to_string(), value.to_string());
             }
         }
 
+        log::debug!("[Executor] Reading response body");
         let body_text = response.text().unwrap_or_default();
+        let body_text_for_preview = body_text.clone();
         let body: serde_json::Value = serde_json::from_str(&body_text)
-            .unwrap_or_else(|_| serde_json::Value::String(body_text));
+            .unwrap_or_else(|_| serde_json::Value::String(body_text.clone()));
+        
+        if let Some(body_preview) = body_text_for_preview.get(0..200) {
+            log::debug!("[Executor] Response body preview (first 200 chars): {}", body_preview);
+        }
 
         let step_response = StepResponse {
             status: status_code,
@@ -305,8 +412,10 @@ impl ScenarioExecutor {
         // Extract variables
         let mut extracted_variables = HashMap::new();
         if let Some(extractors) = &config.extract_variables {
+            log::debug!("[Executor] Extracting {} variables", extractors.len());
             for extractor in extractors {
                 let value = self.extract_variable(extractor, &step_response);
+                log::debug!("[Executor] Extracted variable: {} = {:?}", extractor.name, value);
                 extracted_variables.insert(extractor.name.clone(), value);
             }
         }
@@ -459,7 +568,10 @@ impl ScenarioExecutor {
                     serde_json::Value::Bool(b) => b.to_string(),
                     _ => value.to_string(),
                 };
+                log::debug!("[Executor] Resolving variable {}: {} -> {}", var_name, cap[0].to_string(), replacement);
                 result = result.replace(&cap[0], &replacement);
+            } else {
+                log::warn!("[Executor] Variable {} not found in context", var_name);
             }
         }
 
@@ -670,7 +782,18 @@ pub fn run_scenario(
     steps: &[TestScenarioStep],
     app_handle: Option<&AppHandle>,
 ) -> TestScenarioRun {
+    log::info!("[Executor] run_scenario called for scenario: {}", scenario.name);
     let mut executor = ScenarioExecutor::new();
     executor.execute_scenario(scenario, steps, app_handle)
+}
+
+fn get_error_chain(error: &dyn std::error::Error) -> String {
+    let mut chain = vec![error.to_string()];
+    let mut source = error.source();
+    while let Some(err) = source {
+        chain.push(err.to_string());
+        source = err.source();
+    }
+    chain.join(" -> ")
 }
 

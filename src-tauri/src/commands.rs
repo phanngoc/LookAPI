@@ -6,7 +6,41 @@ use uuid::Uuid;
 
 #[tauri::command]
 pub async fn execute_http_request(request: ApiRequest) -> Result<ApiResponse, String> {
-    http_client::execute_request(request)
+    log::info!("[Command] execute_http_request called: {} {}", request.method, request.endpoint);
+    log::debug!("[Command] Request details: method={}, endpoint={}, has_headers={}, has_params={}", 
+        request.method, 
+        request.endpoint,
+        request.headers.is_some(),
+        !request.parameters.is_null());
+    
+    let start = std::time::Instant::now();
+    
+    // Wrap blocking HTTP client in spawn_blocking to avoid tokio runtime conflicts
+    // Blocking client needs to be created and dropped in blocking thread pool
+    log::debug!("[Command] Spawning blocking task for HTTP request");
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        log::info!("[Command] Blocking task started for HTTP request");
+        http_client::execute_request(request)
+    })
+    .await
+    .map_err(|e| {
+        let error = format!("Failed to execute request in blocking thread: {}", e);
+        log::error!("[Command] Async runtime error: {}", error);
+        error
+    })?;
+    
+    let duration = start.elapsed();
+    match &result {
+        Ok(response) => {
+            log::info!("[Command] Request completed successfully: status={}, duration={}ms", 
+                response.status, duration.as_millis());
+        },
+        Err(e) => {
+            log::error!("[Command] Request failed after {}ms: {}", duration.as_millis(), e);
+        }
+    }
+    
+    result
 }
 
 #[tauri::command]
@@ -387,20 +421,52 @@ pub async fn run_test_scenario(
     app: tauri::AppHandle,
     scenario_id: String,
 ) -> Result<scenario::types::TestScenarioRun, String> {
+    log::info!("[Command] run_test_scenario called for scenario_id: {}", scenario_id);
+    
     let scenario = database::get_test_scenario(&scenario_id)?
-        .ok_or_else(|| "Scenario not found".to_string())?;
+        .ok_or_else(|| {
+            let error = format!("Scenario not found: {}", scenario_id);
+            log::error!("[Command] {}", error);
+            error
+        })?;
+    
+    log::info!("[Command] Scenario found: {} ({} steps)", scenario.name, scenario_id);
     
     let steps = database::get_test_scenario_steps(&scenario_id)?;
+    log::info!("[Command] Loaded {} steps for scenario", steps.len());
     
     // Run scenario in a spawned task to avoid blocking
+    log::info!("[Command] Spawning blocking task to execute scenario");
     let app_clone = app.clone();
+    let scenario_clone = scenario.clone();
+    let steps_clone = steps.clone();
+    
+    let start = std::time::Instant::now();
     let run = tauri::async_runtime::spawn_blocking(move || {
-        scenario::executor::run_scenario(&scenario, &steps, Some(&app_clone))
+        log::info!("[Command] Blocking task started for scenario: {}", scenario_clone.name);
+        scenario::executor::run_scenario(&scenario_clone, &steps_clone, Some(&app_clone))
     })
     .await
-    .map_err(|e| format!("Failed to execute scenario: {}", e))?;
+    .map_err(|e| {
+        let error = format!("Failed to execute scenario: {}", e);
+        log::error!("[Command] Async runtime error: {}", error);
+        log::error!("[Command] Error details: {:?}", e);
+        error
+    })?;
     
-    database::save_test_scenario_run(&run)?;
+    let duration = start.elapsed();
+    log::info!("[Command] Scenario execution completed in {}ms", duration.as_millis());
+    log::info!("[Command] Scenario result: status={:?}, passed={}/{}", 
+        run.status, run.passed_steps, run.total_steps);
+    
+    database::save_test_scenario_run(&run)
+        .map_err(|e| {
+            let error = format!("Failed to save scenario run: {}", e);
+            log::error!("[Command] {}", error);
+            error
+        })?;
+    
+    log::info!("[Command] Scenario run saved to database");
     
     Ok(run)
 }

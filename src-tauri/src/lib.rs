@@ -8,11 +8,24 @@ pub mod types;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    // Initialize logger
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("debug")).init();
+    // Initialize logger with detailed format
+    env_logger::Builder::from_env(
+        env_logger::Env::default()
+            .default_filter_or("debug")
+            .default_write_style_or("always")
+    )
+    .format_timestamp_secs()
+    .format_module_path(true)
+    .format_target(true)
+    .init();
+    
+    log::info!("[App] Logger initialized");
+    log::info!("[App] Log level: {}", std::env::var("RUST_LOG").unwrap_or_else(|_| "debug".to_string()));
     
     // Initialize database
+    log::info!("[App] Initializing database");
     database::init_database().expect("Failed to initialize database");
+    log::info!("[App] Database initialized successfully");
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())

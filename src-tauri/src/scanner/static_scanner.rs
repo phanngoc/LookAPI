@@ -1,5 +1,6 @@
 use crate::scanner::types::{FrameworkInfo, ScannedEndpoint};
 use crate::scanner::parsers::laravel_parser::LaravelParser;
+use crate::scanner::parsers::nestjs_parser::NestJSParser;
 use std::path::PathBuf;
 
 pub struct StaticScanner {
@@ -18,10 +19,7 @@ impl StaticScanner {
     pub async fn scan_endpoints(&self) -> Result<Vec<ScannedEndpoint>, String> {
         match self.framework_info.framework.as_str() {
             "laravel" => self.scan_laravel_endpoints().await,
-            "nestjs" => {
-                // Placeholder for NestJS
-                Ok(vec![])
-            }
+            "nestjs" => self.scan_nestjs_endpoints().await,
             "rails" => {
                 // Placeholder for Rails
                 Ok(vec![])
@@ -39,6 +37,11 @@ impl StaticScanner {
 
     async fn scan_laravel_endpoints(&self) -> Result<Vec<ScannedEndpoint>, String> {
         let mut parser = LaravelParser::new(self.project_path.clone());
+        parser.parse_endpoints().await
+    }
+
+    async fn scan_nestjs_endpoints(&self) -> Result<Vec<ScannedEndpoint>, String> {
+        let mut parser = NestJSParser::new(self.project_path.clone());
         parser.parse_endpoints().await
     }
 }

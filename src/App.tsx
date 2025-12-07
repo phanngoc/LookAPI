@@ -37,6 +37,10 @@ function AppContent() {
   };
 
   const handleSelectEndpoint = (endpoint: APIEndpoint) => {
+    // Tự động activate feature 'api' nếu chưa được set
+    if (activeFeature !== 'api') {
+      setActiveFeature('api');
+    }
     setSelectedEndpoint(endpoint);
   };
 
