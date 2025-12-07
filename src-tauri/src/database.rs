@@ -1,4 +1,4 @@
-use crate::types::{ApiEndpoint, TestSuite, QueryResult, Project};
+use crate::types::{ApiEndpoint, TestSuite, QueryResult, Project, YamlFile};
 use crate::security::types::{SecurityTestCase, SecurityTestRun, ScanConfig};
 use crate::scenario::types::{TestScenario, TestScenarioStep, TestScenarioRun, TestStepType, ScenarioRunStatus};
 use rusqlite::{Connection, Result};
@@ -148,6 +148,20 @@ pub fn init_database() -> Result<()> {
             error_message TEXT,
             results TEXT NOT NULL DEFAULT '[]',
             variables TEXT DEFAULT '{}',
+            FOREIGN KEY (scenario_id) REFERENCES test_scenarios(id) ON DELETE CASCADE
+        )",
+        [],
+    )?;
+
+    // YAML files table - stores generated YAML content
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS yaml_files (
+            id TEXT PRIMARY KEY,
+            project_id TEXT NOT NULL,
+            scenario_id TEXT,
+            content TEXT NOT NULL,
+            created_at INTEGER NOT NULL,
+            FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
             FOREIGN KEY (scenario_id) REFERENCES test_scenarios(id) ON DELETE CASCADE
         )",
         [],
@@ -960,4 +974,99 @@ pub fn get_test_scenario_runs(scenario_id: &str) -> Result<Vec<TestScenarioRun>,
     .map_err(|e| format!("Collection error: {}", e))?;
 
     Ok(runs)
+}
+
+// ============================================================================
+// YAML Files Functions
+// ============================================================================
+
+/// Save a YAML file to the database
+pub fn save_yaml_file(yaml_file: YamlFile) -> Result<(), String> {
+    let conn = Connection::open(get_db_path())
+        .map_err(|e| format!("DB error: {}", e))?;
+
+    conn.execute(
+        "INSERT OR REPLACE INTO yaml_files 
+        (id, project_id, scenario_id, content, created_at)
+        VALUES (?, ?, ?, ?, ?)",
+        rusqlite::params![
+            yaml_file.id,
+            yaml_file.project_id,
+            yaml_file.scenario_id,
+            yaml_file.content,
+            yaml_file.created_at
+        ],
+    )
+    .map_err(|e| format!("Insert error: {}", e))?;
+
+    Ok(())
+}
+
+/// Get all YAML files for a project
+pub fn get_yaml_files_by_project(project_id: &str) -> Result<Vec<YamlFile>, String> {
+    let conn = Connection::open(get_db_path())
+        .map_err(|e| format!("DB error: {}", e))?;
+
+    let mut stmt = conn.prepare(
+        "SELECT id, project_id, scenario_id, content, created_at 
+         FROM yaml_files WHERE project_id = ? ORDER BY created_at DESC"
+    )
+    .map_err(|e| format!("Prepare error: {}", e))?;
+
+    let files = stmt.query_map([project_id], |row| {
+        Ok(YamlFile {
+            id: row.get(0)?,
+            project_id: row.get(1)?,
+            scenario_id: row.get(2)?,
+            content: row.get(3)?,
+            created_at: row.get(4)?,
+        })
+    })
+    .map_err(|e| format!("Query error: {}", e))?
+    .collect::<Result<Vec<_>, _>>()
+    .map_err(|e| format!("Collection error: {}", e))?;
+
+    Ok(files)
+}
+
+/// Get a single YAML file by ID
+pub fn get_yaml_file(id: &str) -> Result<Option<YamlFile>, String> {
+    let conn = Connection::open(get_db_path())
+        .map_err(|e| format!("DB error: {}", e))?;
+
+    let mut stmt = conn.prepare(
+        "SELECT id, project_id, scenario_id, content, created_at 
+         FROM yaml_files WHERE id = ?"
+    )
+    .map_err(|e| format!("Prepare error: {}", e))?;
+
+    let yaml_file = stmt.query_row([id], |row| {
+        Ok(YamlFile {
+            id: row.get(0)?,
+            project_id: row.get(1)?,
+            scenario_id: row.get(2)?,
+            content: row.get(3)?,
+            created_at: row.get(4)?,
+        })
+    });
+
+    match yaml_file {
+        Ok(f) => Ok(Some(f)),
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+        Err(e) => Err(format!("Query error: {}", e)),
+    }
+}
+
+/// Delete a YAML file by ID
+pub fn delete_yaml_file(id: &str) -> Result<(), String> {
+    let conn = Connection::open(get_db_path())
+        .map_err(|e| format!("DB error: {}", e))?;
+
+    conn.execute(
+        "DELETE FROM yaml_files WHERE id = ?",
+        rusqlite::params![id],
+    )
+    .map_err(|e| format!("Delete error: {}", e))?;
+
+    Ok(())
 }

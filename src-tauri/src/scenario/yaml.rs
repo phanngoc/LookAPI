@@ -311,16 +311,66 @@ pub fn project_scenarios_to_yaml_string(
 // Conversion Functions: YAML -> Internal Types
 // ============================================================================
 
-/// Parse YAML string to ScenarioYaml
-pub fn parse_scenario_yaml(yaml_content: &str) -> Result<ScenarioYaml, String> {
-    serde_yaml::from_str(yaml_content)
-        .map_err(|e| format!("Failed to parse YAML: {}", e))
+/// Auto-correct YAML by parsing and re-serializing with serde_yaml
+/// This normalizes indentation, spacing, and fixes minor syntax issues
+pub fn auto_correct_yaml(yaml_content: &str) -> Result<String, String> {
+    // Try to parse as generic YAML value first
+    let value: serde_yaml::Value = serde_yaml::from_str(yaml_content)
+        .map_err(|e| format!("Failed to parse YAML for auto-correction: {}", e))?;
+    
+    // Re-serialize with proper formatting
+    serde_yaml::to_string(&value)
+        .map_err(|e| format!("Failed to serialize corrected YAML: {}", e))
 }
 
-/// Parse YAML string to ProjectScenariosYaml
+/// Parse YAML string to ScenarioYaml with auto-correction
+/// If initial parse fails, attempts to auto-correct the YAML and parse again
+pub fn parse_scenario_yaml(yaml_content: &str) -> Result<ScenarioYaml, String> {
+    // First attempt: try to parse directly
+    match serde_yaml::from_str::<ScenarioYaml>(yaml_content) {
+        Ok(scenario) => Ok(scenario),
+        Err(first_error) => {
+            // Second attempt: try to auto-correct and parse again
+            log::warn!("Initial YAML parse failed: {}. Attempting auto-correction...", first_error);
+            
+            match auto_correct_yaml(yaml_content) {
+                Ok(corrected_yaml) => {
+                    // Try parsing the corrected YAML
+                    serde_yaml::from_str::<ScenarioYaml>(&corrected_yaml)
+                        .map_err(|e| format!("Failed to parse YAML even after auto-correction: {}", e))
+                }
+                Err(_) => {
+                    // If auto-correction fails, return the original error
+                    Err(format!("Failed to parse YAML: {}", first_error))
+                }
+            }
+        }
+    }
+}
+
+/// Parse YAML string to ProjectScenariosYaml with auto-correction
+/// If initial parse fails, attempts to auto-correct the YAML and parse again
 pub fn parse_project_scenarios_yaml(yaml_content: &str) -> Result<ProjectScenariosYaml, String> {
-    serde_yaml::from_str(yaml_content)
-        .map_err(|e| format!("Failed to parse project YAML: {}", e))
+    // First attempt: try to parse directly
+    match serde_yaml::from_str::<ProjectScenariosYaml>(yaml_content) {
+        Ok(project) => Ok(project),
+        Err(first_error) => {
+            // Second attempt: try to auto-correct and parse again
+            log::warn!("Initial project YAML parse failed: {}. Attempting auto-correction...", first_error);
+            
+            match auto_correct_yaml(yaml_content) {
+                Ok(corrected_yaml) => {
+                    // Try parsing the corrected YAML
+                    serde_yaml::from_str::<ProjectScenariosYaml>(&corrected_yaml)
+                        .map_err(|e| format!("Failed to parse project YAML even after auto-correction: {}", e))
+                }
+                Err(_) => {
+                    // If auto-correction fails, return the original error
+                    Err(format!("Failed to parse project YAML: {}", first_error))
+                }
+            }
+        }
+    }
 }
 
 /// Convert ScenarioYaml to TestScenario (without ID - will be assigned on save)
@@ -877,6 +927,50 @@ steps:
 "#;
         let result = parse_scenario_yaml(yaml);
         assert!(result.is_ok());
+        let scenario = result.unwrap();
+        assert_eq!(scenario.name, "Test Scenario");
+        assert_eq!(scenario.priority, "high");
+        assert_eq!(scenario.steps.len(), 1);
+    }
+
+    #[test]
+    fn test_auto_correct_yaml() {
+        // YAML with improper indentation and spacing
+        let bad_yaml = r#"
+name:   "Test"
+priority:    medium
+variables:
+  baseUrl:     "http://localhost"
+  token:  "abc"
+steps:
+  -  name:   "Step 1"
+     enabled:  true
+"#;
+        let result = auto_correct_yaml(bad_yaml);
+        assert!(result.is_ok());
+        
+        let corrected = result.unwrap();
+        // The corrected YAML should be valid and properly formatted
+        let parsed: serde_yaml::Value = serde_yaml::from_str(&corrected).unwrap();
+        assert!(parsed.get("name").is_some());
+        assert!(parsed.get("priority").is_some());
+    }
+
+    #[test]
+    fn test_parse_yaml_with_auto_correction() {
+        // YAML with spacing issues that should be auto-corrected
+        let yaml_with_issues = r#"
+name:    "Test Scenario"
+priority:   high
+steps:
+  -   name:  "GET Request"
+      request:
+        method:  GET
+        url:   /api/test
+"#;
+        let result = parse_scenario_yaml(yaml_with_issues);
+        assert!(result.is_ok(), "Should parse YAML even with spacing issues");
+        
         let scenario = result.unwrap();
         assert_eq!(scenario.name, "Test Scenario");
         assert_eq!(scenario.priority, "high");

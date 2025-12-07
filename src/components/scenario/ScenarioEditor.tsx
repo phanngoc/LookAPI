@@ -36,6 +36,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
+import { useQueryClient } from '@tanstack/react-query';
 import { useTestScenario, useTestScenarioSteps } from '@/hooks/useTestScenarios';
 import { StepEditor } from './StepEditor';
 import { YamlEditor } from './YamlEditor';
@@ -88,6 +89,7 @@ export function ScenarioEditor({ scenario, onRunClick }: Props) {
   const [isExporting, setIsExporting] = useState(false);
 
   const { toast } = useToast();
+  const queryClient = useQueryClient();
   const { updateScenario, isUpdating } = useTestScenario(scenario.id);
   const {
     steps,
@@ -137,6 +139,20 @@ export function ScenarioEditor({ scenario, onRunClick }: Props) {
     }
   };
 
+  // Handle YAML save (refresh scenario and steps after save)
+  const handleYamlSave = async () => {
+    try {
+      // Invalidate queries to refresh scenario and steps data
+      await queryClient.invalidateQueries({ queryKey: ['testScenario', scenario.id] });
+      await queryClient.invalidateQueries({ queryKey: ['testScenarios', scenario.projectId] });
+      await queryClient.invalidateQueries({ queryKey: ['testScenarioSteps', scenario.id] });
+      // Refetch steps to get updated data
+      await refetchSteps();
+    } catch (e) {
+      console.error('Failed to refresh after save:', e);
+    }
+  };
+
   // Export current scenario to YAML file
   const handleExportToFile = async () => {
     setIsExporting(true);
@@ -169,6 +185,32 @@ export function ScenarioEditor({ scenario, onRunClick }: Props) {
     setDescription(scenario.description || '');
     setPriority(scenario.priority);
   }, [scenario]);
+
+  // Reload YAML when scenario changes and we're in YAML mode
+  useEffect(() => {
+    if (viewMode === 'yaml') {
+      const loadYaml = async () => {
+        setIsExporting(true);
+        try {
+          const yaml = await tauriService.exportScenarioYaml(scenario.id);
+          setYamlContent(yaml);
+        } catch (e) {
+          toast({
+            title: 'Export Error',
+            description: e instanceof Error ? e.message : 'Failed to export scenario',
+            variant: 'destructive',
+          });
+          // Reset to empty on error
+          setYamlContent('');
+        } finally {
+          setIsExporting(false);
+        }
+      };
+      loadYaml();
+    }
+    // Note: We don't reset yamlContent when switching away from YAML mode
+    // because handleSwitchToYaml will reload it when switching back
+  }, [scenario.id, viewMode, toast]);
 
   const handleSaveSettings = async () => {
     try {
@@ -354,9 +396,12 @@ export function ScenarioEditor({ scenario, onRunClick }: Props) {
             value={yamlContent}
             onChange={setYamlContent}
             onImport={handleYamlImport}
+            onSave={handleYamlSave}
             height="100%"
             showPreview={true}
             showActions={true}
+            projectId={scenario.projectId}
+            scenarioId={scenario.id}
           />
         </div>
       ) : (

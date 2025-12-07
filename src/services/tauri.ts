@@ -237,4 +237,38 @@ export const tauriService = {
       baseUrl 
     });
   },
+
+  /**
+   * Save YAML template to database
+   * 
+   * @param projectId - Project ID
+   * @param content - YAML content to save
+   * @param scenarioId - Optional scenario ID to associate with
+   * @returns Saved YAML file
+   */
+  async saveYamlFile(
+    projectId: string,
+    content: string,
+    scenarioId?: string
+  ): Promise<any> {
+    return invoke('save_yaml_file', { 
+      projectId, 
+      content, 
+      scenarioId 
+    });
+  },
+
+  /**
+   * Update an existing scenario from YAML content
+   * 
+   * @param scenarioId - Scenario ID to update
+   * @param yamlContent - YAML content to update from
+   * @returns Updated scenario
+   */
+  async updateScenarioFromYaml(
+    scenarioId: string,
+    yamlContent: string
+  ): Promise<TestScenario> {
+    return invoke('update_scenario_from_yaml', { scenarioId, yamlContent });
+  },
 };

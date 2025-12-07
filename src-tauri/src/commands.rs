@@ -638,6 +638,25 @@ pub async fn generate_yaml_with_ai(
     match result {
         Ok(yaml) => {
             log::info!("[Command] AI generation successful");
+            
+            // Save generated YAML to database if project_id is provided
+            if let Some(ref pid) = project_id {
+                let yaml_file = YamlFile {
+                    id: Uuid::new_v4().to_string(),
+                    project_id: pid.clone(),
+                    scenario_id: None,
+                    content: yaml.clone(),
+                    created_at: chrono::Utc::now().timestamp(),
+                };
+                
+                if let Err(e) = database::save_yaml_file(yaml_file) {
+                    log::warn!("[Command] Failed to save YAML to database: {}", e);
+                    // Don't fail the command, just log the warning
+                }  else {
+                    log::info!("[Command] YAML saved to database successfully");
+                }
+            }
+            
             Ok(yaml)
         }
         Err(e) => {
@@ -645,4 +664,111 @@ pub async fn generate_yaml_with_ai(
             Err(e)
         }
     }
+}
+
+/// Get all YAML files for a project
+#[tauri::command]
+pub async fn get_yaml_files(project_id: String) -> Result<Vec<YamlFile>, String> {
+    database::get_yaml_files_by_project(&project_id)
+}
+
+/// Save a YAML file
+#[tauri::command]
+pub async fn save_yaml_file(
+    project_id: String,
+    content: String,
+    scenario_id: Option<String>,
+) -> Result<YamlFile, String> {
+    log::info!("[Command] save_yaml_file called - project_id: {}, scenario_id: {:?}, content_length: {}", 
+        project_id, scenario_id, content.len());
+    
+    let yaml_file = YamlFile {
+        id: Uuid::new_v4().to_string(),
+        project_id: project_id.clone(),
+        scenario_id: scenario_id.clone(),
+        content: content.clone(),
+        created_at: chrono::Utc::now().timestamp(),
+    };
+    
+    match database::save_yaml_file(yaml_file.clone()) {
+        Ok(_) => {
+            log::info!("[Command] YAML file saved successfully - id: {}, project_id: {}", 
+                yaml_file.id, yaml_file.project_id);
+            Ok(yaml_file)
+        }
+        Err(e) => {
+            log::error!("[Command] Failed to save YAML file - project_id: {}, error: {}", 
+                project_id, e);
+            Err(e)
+        }
+    }
+}
+
+/// Delete a YAML file
+#[tauri::command]
+pub async fn delete_yaml_file(id: String) -> Result<(), String> {
+    database::delete_yaml_file(&id)
+}
+
+/// Update an existing scenario from YAML content
+#[tauri::command]
+pub async fn update_scenario_from_yaml(
+    scenario_id: String,
+    yaml_content: String,
+) -> Result<scenario::types::TestScenario, String> {
+    log::info!("[Command] update_scenario_from_yaml called - scenario_id: {}, content_length: {}", 
+        scenario_id, yaml_content.len());
+    
+    // 1. Verify scenario exists
+    let existing_scenario = database::get_test_scenario(&scenario_id)?
+        .ok_or_else(|| format!("Scenario not found: {}", scenario_id))?;
+    
+    log::info!("[Command] Found existing scenario: {} (project_id: {})", 
+        existing_scenario.name, existing_scenario.project_id);
+    
+    // 2. Parse YAML
+    let yaml = parse_scenario_yaml(&yaml_content)?;
+    
+    // 3. Delete old steps
+    let old_steps = database::get_test_scenario_steps(&scenario_id)?;
+    log::info!("[Command] Deleting {} old steps", old_steps.len());
+    for step in old_steps {
+        database::delete_test_scenario_step(&step.id)?;
+    }
+    
+    // 4. Update scenario with YAML data (keep existing ID, project_id, created_at)
+    let now = chrono::Utc::now().timestamp();
+    let updated_scenario = scenario::types::TestScenario {
+        id: existing_scenario.id.clone(),
+        project_id: existing_scenario.project_id.clone(),
+        name: yaml.name.clone(),
+        description: yaml.description.clone(),
+        priority: yaml.priority.clone(),
+        variables: serde_json::to_value(&yaml.variables).unwrap_or(serde_json::json!({})),
+        pre_script: yaml.pre_script.clone(),
+        post_script: yaml.post_script.clone(),
+        created_at: existing_scenario.created_at,
+        updated_at: now,
+    };
+    
+    database::save_test_scenario(updated_scenario.clone())?;
+    log::info!("[Command] Scenario updated: {}", updated_scenario.name);
+    
+    // 5. Create new steps from YAML
+    let new_steps: Vec<scenario::types::TestScenarioStep> = yaml
+        .steps
+        .iter()
+        .enumerate()
+        .map(|(i, step_yaml)| scenario::yaml::yaml_to_step(step_yaml, &scenario_id, i as i32))
+        .collect();
+    
+    log::info!("[Command] Creating {} new steps", new_steps.len());
+    for step in new_steps {
+        database::save_test_scenario_step(step)?;
+    }
+    
+    log::info!("[Command] Scenario updated successfully - id: {}, steps_count: {}", 
+        updated_scenario.id, yaml.steps.len());
+    
+    Ok(updated_scenario)
 }

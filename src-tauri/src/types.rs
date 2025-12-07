@@ -74,3 +74,15 @@ pub struct QueryResult {
     pub rows: Vec<Vec<serde_json::Value>>,
     pub row_count: usize,
 }
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct YamlFile {
+    pub id: String,
+    #[serde(rename = "projectId")]
+    pub project_id: String,
+    #[serde(rename = "scenarioId")]
+    pub scenario_id: Option<String>,
+    pub content: String,
+    #[serde(rename = "createdAt")]
+    pub created_at: i64,
+}

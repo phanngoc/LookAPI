@@ -11,6 +11,7 @@ import {
   FileText,
   Sparkles,
   Loader2,
+  Save,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -28,37 +29,46 @@ import { cn } from '@/lib/utils';
 import { tauriService } from '@/services/tauri';
 import { ScenarioImportPreview, ProjectImportPreview } from '@/types/yaml';
 import { useProject } from '@/contexts/ProjectContext';
+import { useToast } from '@/hooks/use-toast';
 
 interface YamlEditorProps {
   value: string;
   onChange?: (value: string) => void;
   onImport?: (yamlContent: string) => void;
+  onSave?: () => void;
   readOnly?: boolean;
   height?: string | number;
   showPreview?: boolean;
   showActions?: boolean;
   mode?: 'single' | 'project';
   className?: string;
+  projectId?: string;
+  scenarioId?: string;
 }
 
 export function YamlEditor({
   value,
   onChange,
   onImport,
+  onSave,
   readOnly = false,
   height = '400px',
   showPreview = true,
   showActions = true,
   mode = 'single',
   className,
+  projectId,
+  scenarioId,
 }: YamlEditorProps) {
   const { currentProject } = useProject();
+  const { toast } = useToast();
   const [content, setContent] = useState(value);
   const [isValid, setIsValid] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [preview, setPreview] = useState<ScenarioImportPreview | ProjectImportPreview | null>(null);
   const [isValidating, setIsValidating] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
   
   // AI Generation states
   const [showAIDialog, setShowAIDialog] = useState(false);
@@ -105,9 +115,7 @@ export function YamlEditor({
 
   // Sync with external value
   useEffect(() => {
-    if (value !== content) {
-      setContent(value);
-    }
+    setContent(value);
   }, [value]);
 
   const handleChange = (newValue: string | undefined) => {
@@ -200,6 +208,86 @@ export function YamlEditor({
     }
   };
 
+  const handleSave = async () => {
+    console.log('[YamlEditor] Save clicked', {
+      hasContent: !!content.trim(),
+      contentLength: content.length,
+      isValid,
+      isValidating,
+      projectId: projectId || currentProject?.id,
+      scenarioId,
+    });
+
+    if (!content.trim()) {
+      toast({
+        title: 'Cannot Save',
+        description: 'YAML content is empty',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    // Show warning if YAML is invalid (but still allow save)
+    if (!isValid) {
+      toast({
+        title: 'Saving with errors',
+        description: 'YAML may have errors. The system will attempt to auto-correct formatting issues.',
+        variant: 'default',
+      });
+    }
+
+    // Use provided projectId or fallback to currentProject
+    const targetProjectId = projectId || currentProject?.id;
+    if (!targetProjectId) {
+      console.error('[YamlEditor] No project ID available');
+      toast({
+        title: 'Cannot Save',
+        description: 'Please select a project first',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    console.log('[YamlEditor] Attempting to save YAML', {
+      projectId: targetProjectId,
+      scenarioId,
+      contentLength: content.length,
+    });
+
+    setIsSaving(true);
+    try {
+      if (scenarioId) {
+        // Update existing scenario from YAML
+        const result = await tauriService.updateScenarioFromYaml(scenarioId, content);
+        console.log('[YamlEditor] Scenario updated successfully', result);
+        toast({
+          title: 'Saved Successfully',
+          description: 'Scenario has been updated from YAML',
+        });
+        // Call onSave callback to refresh data
+        onSave?.();
+      } else {
+        // Save YAML as template (existing behavior)
+        const result = await tauriService.saveYamlFile(targetProjectId, content, scenarioId);
+        console.log('[YamlEditor] YAML template saved successfully', result);
+        toast({
+          title: 'Saved Successfully',
+          description: 'YAML template has been saved',
+        });
+      }
+    } catch (e) {
+      const errorMessage = e instanceof Error ? e.message : String(e);
+      console.error('[YamlEditor] Save failed', e);
+      toast({
+        title: 'Save Error',
+        description: errorMessage || (scenarioId ? 'Failed to update scenario' : 'Failed to save YAML template'),
+        variant: 'destructive',
+      });
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
   return (
     <div className={cn('flex flex-col h-full', className)}>
       {/* Toolbar */}
@@ -225,6 +313,22 @@ export function YamlEditor({
             )}
           </div>
           <div className="flex items-center gap-1">
+            {(projectId || currentProject) && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={handleSave}
+                disabled={!content.trim() || isSaving}
+                title="Save YAML template"
+                className="text-blue-600 hover:text-blue-700 hover:bg-blue-50"
+              >
+                {isSaving ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <Save className="w-4 h-4" />
+                )}
+              </Button>
+            )}
             <Button
               variant="ghost"
               size="sm"
@@ -364,7 +468,7 @@ export function YamlEditor({
 
       {/* AI Generation Dialog */}
       <Dialog open={showAIDialog} onOpenChange={setShowAIDialog}>
-        <DialogContent className="sm:max-w-[500px]">
+        <DialogContent className="max-w-[33vw] w-1/3">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <Sparkles className="w-5 h-5 text-purple-500" />
@@ -407,18 +511,19 @@ export function YamlEditor({
             )}
           </div>
           
-          <DialogFooter>
+          <DialogFooter className="flex-row justify-end gap-2">
             <Button
               variant="outline"
               onClick={() => setShowAIDialog(false)}
               disabled={isGenerating}
+              className="w-auto"
             >
               Cancel
             </Button>
             <Button
               onClick={handleGenerateWithAI}
               disabled={!aiPrompt.trim() || isGenerating}
-              className="bg-purple-600 hover:bg-purple-700"
+              className="bg-purple-600 hover:bg-purple-700 w-auto"
             >
               {isGenerating ? (
                 <>
