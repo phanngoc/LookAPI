@@ -65,6 +65,14 @@ pub fn run() {
             commands::reorder_test_scenario_steps,
             commands::run_test_scenario,
             commands::get_test_scenario_runs,
+            // YAML export/import commands
+            commands::export_scenario_yaml,
+            commands::export_project_scenarios_yaml,
+            commands::preview_scenario_yaml_import,
+            commands::preview_project_scenarios_yaml_import,
+            commands::import_scenario_yaml,
+            commands::import_project_scenarios_yaml,
+            commands::get_yaml_template,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -13,6 +13,9 @@ import {
   ChevronUp,
   Settings2,
   Save,
+  FileCode,
+  Download,
+  Pencil,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -35,6 +38,9 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { useTestScenario, useTestScenarioSteps } from '@/hooks/useTestScenarios';
 import { StepEditor } from './StepEditor';
+import { YamlEditor } from './YamlEditor';
+import { tauriService } from '@/services/tauri';
+import { useToast } from '@/hooks/use-toast';
 import {
   TestScenario,
   TestScenarioStep,
@@ -69,13 +75,19 @@ const DEFAULT_CONFIGS: Record<TestStepType, any> = {
   loop: DEFAULT_LOOP_CONFIG,
 };
 
+type ViewMode = 'visual' | 'yaml';
+
 export function ScenarioEditor({ scenario, onRunClick }: Props) {
   const [editingStep, setEditingStep] = useState<TestScenarioStep | null>(null);
   const [showSettings, setShowSettings] = useState(false);
   const [name, setName] = useState(scenario.name);
   const [description, setDescription] = useState(scenario.description || '');
   const [priority, setPriority] = useState<string>(scenario.priority);
+  const [viewMode, setViewMode] = useState<ViewMode>('visual');
+  const [yamlContent, setYamlContent] = useState('');
+  const [isExporting, setIsExporting] = useState(false);
 
+  const { toast } = useToast();
   const { updateScenario, isUpdating } = useTestScenario(scenario.id);
   const {
     steps,
@@ -84,8 +96,73 @@ export function ScenarioEditor({ scenario, onRunClick }: Props) {
     updateStep,
     deleteStep,
     reorderSteps,
+    refetch: refetchSteps,
     isAdding,
   } = useTestScenarioSteps(scenario.id);
+
+  // Load YAML when switching to YAML mode
+  const handleSwitchToYaml = async () => {
+    setIsExporting(true);
+    try {
+      const yaml = await tauriService.exportScenarioYaml(scenario.id);
+      setYamlContent(yaml);
+      setViewMode('yaml');
+    } catch (e) {
+      toast({
+        title: 'Export Error',
+        description: e instanceof Error ? e.message : 'Failed to export scenario',
+        variant: 'destructive',
+      });
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
+  // Handle YAML import (update current scenario)
+  const handleYamlImport = async (yamlContent: string) => {
+    try {
+      // Import as a new scenario, then we can provide option to replace
+      await tauriService.importScenarioYaml(scenario.projectId, yamlContent);
+      toast({
+        title: 'Imported Successfully',
+        description: 'Scenario has been imported. Refresh to see changes.',
+      });
+      refetchSteps();
+    } catch (e) {
+      toast({
+        title: 'Import Error',
+        description: e instanceof Error ? e.message : 'Failed to import scenario',
+        variant: 'destructive',
+      });
+    }
+  };
+
+  // Export current scenario to YAML file
+  const handleExportToFile = async () => {
+    setIsExporting(true);
+    try {
+      const yaml = await tauriService.exportScenarioYaml(scenario.id);
+      const blob = new Blob([yaml], { type: 'text/yaml' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${scenario.name.replace(/[^a-z0-9]/gi, '_').toLowerCase()}.yaml`;
+      a.click();
+      URL.revokeObjectURL(url);
+      toast({
+        title: 'Exported Successfully',
+        description: 'Scenario has been exported to YAML file.',
+      });
+    } catch (e) {
+      toast({
+        title: 'Export Error',
+        description: e instanceof Error ? e.message : 'Failed to export scenario',
+        variant: 'destructive',
+      });
+    } finally {
+      setIsExporting(false);
+    }
+  };
 
   useEffect(() => {
     setName(scenario.name);
@@ -170,8 +247,40 @@ export function ScenarioEditor({ scenario, onRunClick }: Props) {
             <Badge variant="outline" className="text-xs">
               {steps.length} steps
             </Badge>
+            {/* Mode Toggle */}
+            <div className="flex items-center rounded-lg border border-slate-200 p-0.5">
+              <Button
+                variant={viewMode === 'visual' ? 'default' : 'ghost'}
+                size="sm"
+                className="h-7 px-2"
+                onClick={() => setViewMode('visual')}
+              >
+                <Pencil className="w-3 h-3 mr-1" />
+                Visual
+              </Button>
+              <Button
+                variant={viewMode === 'yaml' ? 'default' : 'ghost'}
+                size="sm"
+                className="h-7 px-2"
+                onClick={handleSwitchToYaml}
+                disabled={isExporting}
+              >
+                <FileCode className="w-3 h-3 mr-1" />
+                YAML
+              </Button>
+            </div>
           </div>
           <div className="flex items-center gap-2">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={handleExportToFile}
+              disabled={isExporting}
+              title="Export to YAML file"
+            >
+              <Download className="w-4 h-4 mr-1.5" />
+              Export
+            </Button>
             <Button
               variant="ghost"
               size="sm"
@@ -238,23 +347,36 @@ export function ScenarioEditor({ scenario, onRunClick }: Props) {
         )}
       </div>
 
-      {/* Steps List */}
-      <div className="flex-1 flex">
-        <div className="flex-1 border-r border-slate-200">
-          <ScrollArea className="h-full">
-            <div className="p-4 space-y-2">
-              {stepsLoading ? (
-                <div className="text-center text-slate-500 py-8">Loading steps...</div>
-              ) : steps.length === 0 ? (
-                <Card className="border-dashed">
-                  <CardHeader className="text-center">
-                    <CardTitle className="text-sm">No Steps Yet</CardTitle>
-                    <p className="text-xs text-slate-500">
-                      Add your first step to start building the scenario
-                    </p>
-                  </CardHeader>
-                </Card>
-              ) : (
+      {/* Content Area - Visual or YAML Mode */}
+      {viewMode === 'yaml' ? (
+        <div className="flex-1">
+          <YamlEditor
+            value={yamlContent}
+            onChange={setYamlContent}
+            onImport={handleYamlImport}
+            height="100%"
+            showPreview={true}
+            showActions={true}
+          />
+        </div>
+      ) : (
+        /* Steps List - Visual Mode */
+        <div className="flex-1 flex">
+          <div className="flex-1 border-r border-slate-200">
+            <ScrollArea className="h-full">
+              <div className="p-4 space-y-2">
+                {stepsLoading ? (
+                  <div className="text-center text-slate-500 py-8">Loading steps...</div>
+                ) : steps.length === 0 ? (
+                  <Card className="border-dashed">
+                    <CardHeader className="text-center">
+                      <CardTitle className="text-sm">No Steps Yet</CardTitle>
+                      <p className="text-xs text-slate-500">
+                        Add your first step to start building the scenario
+                      </p>
+                    </CardHeader>
+                  </Card>
+                ) : (
                 steps.map((step, index) => (
                   <div
                     key={step.id}
@@ -390,22 +512,23 @@ export function ScenarioEditor({ scenario, onRunClick }: Props) {
           </ScrollArea>
         </div>
 
-        {/* Step Editor Panel */}
-        {editingStep && (
-          <div className="w-[500px] h-full bg-slate-50">
-            <StepEditor
-              step={editingStep}
-              onClose={() => setEditingStep(null)}
-              onSave={async (updates) => {
-                const updatedStep = await updateStep(updates);
-                // Update editingStep with the returned step from server
-                setEditingStep(updatedStep);
-              }}
-              projectId={scenario.projectId}
-            />
-          </div>
-        )}
-      </div>
+          {/* Step Editor Panel */}
+          {editingStep && (
+            <div className="w-[500px] h-full bg-slate-50">
+              <StepEditor
+                step={editingStep}
+                onClose={() => setEditingStep(null)}
+                onSave={async (updates) => {
+                  const updatedStep = await updateStep(updates);
+                  // Update editingStep with the returned step from server
+                  setEditingStep(updatedStep);
+                }}
+                projectId={scenario.projectId}
+              />
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

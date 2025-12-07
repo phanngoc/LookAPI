@@ -196,3 +196,124 @@ export function useTestScenarioRuns(scenarioId: string) {
   };
 }
 
+// ============================================================================
+// YAML Export/Import Hooks
+// ============================================================================
+
+// Hook for exporting a single scenario to YAML
+export function useExportScenarioYaml() {
+  return useMutation({
+    mutationFn: ({ scenarioId, baseUrl }: { scenarioId: string; baseUrl?: string }) =>
+      tauriService.exportScenarioYaml(scenarioId, baseUrl),
+  });
+}
+
+// Hook for exporting all scenarios in a project to YAML
+export function useExportProjectScenariosYaml() {
+  return useMutation({
+    mutationFn: (projectId: string) => tauriService.exportProjectScenariosYaml(projectId),
+  });
+}
+
+// Hook for previewing a scenario import
+export function usePreviewScenarioYamlImport() {
+  return useMutation({
+    mutationFn: (yamlContent: string) => tauriService.previewScenarioYamlImport(yamlContent),
+  });
+}
+
+// Hook for previewing a project scenarios import
+export function usePreviewProjectScenariosYamlImport() {
+  return useMutation({
+    mutationFn: (yamlContent: string) => tauriService.previewProjectScenariosYamlImport(yamlContent),
+  });
+}
+
+// Hook for importing a single scenario from YAML
+export function useImportScenarioYaml(projectId: string) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (yamlContent: string) => tauriService.importScenarioYaml(projectId, yamlContent),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['testScenarios', projectId] });
+    },
+  });
+}
+
+// Hook for importing multiple scenarios from project YAML
+export function useImportProjectScenariosYaml(projectId: string) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (yamlContent: string) =>
+      tauriService.importProjectScenariosYaml(projectId, yamlContent),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['testScenarios', projectId] });
+    },
+  });
+}
+
+// Hook for getting YAML template
+export function useYamlTemplate() {
+  return useQuery({
+    queryKey: ['yamlTemplate'],
+    queryFn: () => tauriService.getYamlTemplate(),
+    staleTime: Infinity, // Template doesn't change
+  });
+}
+
+// Combined hook for all YAML operations in a project
+export function useScenarioYaml(projectId: string) {
+  const queryClient = useQueryClient();
+
+  const exportScenarioMutation = useMutation({
+    mutationFn: ({ scenarioId, baseUrl }: { scenarioId: string; baseUrl?: string }) =>
+      tauriService.exportScenarioYaml(scenarioId, baseUrl),
+  });
+
+  const exportProjectMutation = useMutation({
+    mutationFn: () => tauriService.exportProjectScenariosYaml(projectId),
+  });
+
+  const importScenarioMutation = useMutation({
+    mutationFn: (yamlContent: string) => tauriService.importScenarioYaml(projectId, yamlContent),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['testScenarios', projectId] });
+    },
+  });
+
+  const importProjectMutation = useMutation({
+    mutationFn: (yamlContent: string) =>
+      tauriService.importProjectScenariosYaml(projectId, yamlContent),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['testScenarios', projectId] });
+    },
+  });
+
+  const previewScenarioMutation = useMutation({
+    mutationFn: (yamlContent: string) => tauriService.previewScenarioYamlImport(yamlContent),
+  });
+
+  const previewProjectMutation = useMutation({
+    mutationFn: (yamlContent: string) => tauriService.previewProjectScenariosYamlImport(yamlContent),
+  });
+
+  return {
+    // Export
+    exportScenario: exportScenarioMutation.mutateAsync,
+    exportProject: exportProjectMutation.mutateAsync,
+    isExporting: exportScenarioMutation.isPending || exportProjectMutation.isPending,
+
+    // Import
+    importScenario: importScenarioMutation.mutateAsync,
+    importProject: importProjectMutation.mutateAsync,
+    isImporting: importScenarioMutation.isPending || importProjectMutation.isPending,
+
+    // Preview
+    previewScenario: previewScenarioMutation.mutateAsync,
+    previewProject: previewProjectMutation.mutateAsync,
+    isPreviewing: previewScenarioMutation.isPending || previewProjectMutation.isPending,
+  };
+}
+

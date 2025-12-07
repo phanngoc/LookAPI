@@ -10,6 +10,10 @@ import {
   UpdateStepRequest,
   ReorderStepsRequest,
 } from '../types/scenario';
+import {
+  ScenarioImportPreview,
+  ProjectImportPreview,
+} from '../types/yaml';
 
 export const tauriService = {
   async executeHttpRequest(request: APIRequest): Promise<APIResponse> {
@@ -156,5 +160,58 @@ export const tauriService = {
 
   async getTestScenarioRuns(scenarioId: string): Promise<TestScenarioRun[]> {
     return invoke('get_test_scenario_runs', { scenarioId });
+  },
+
+  // ============================================================================
+  // YAML Export/Import APIs
+  // ============================================================================
+
+  /**
+   * Export a single scenario to YAML string
+   */
+  async exportScenarioYaml(scenarioId: string, baseUrl?: string): Promise<string> {
+    return invoke('export_scenario_yaml', { scenarioId, baseUrl });
+  },
+
+  /**
+   * Export all scenarios in a project to YAML string
+   */
+  async exportProjectScenariosYaml(projectId: string): Promise<string> {
+    return invoke('export_project_scenarios_yaml', { projectId });
+  },
+
+  /**
+   * Preview a scenario import from YAML (dry run)
+   */
+  async previewScenarioYamlImport(yamlContent: string): Promise<ScenarioImportPreview> {
+    return invoke('preview_scenario_yaml_import', { yamlContent });
+  },
+
+  /**
+   * Preview a project scenarios import from YAML (dry run)
+   */
+  async previewProjectScenariosYamlImport(yamlContent: string): Promise<ProjectImportPreview> {
+    return invoke('preview_project_scenarios_yaml_import', { yamlContent });
+  },
+
+  /**
+   * Import a single scenario from YAML
+   */
+  async importScenarioYaml(projectId: string, yamlContent: string): Promise<TestScenario> {
+    return invoke('import_scenario_yaml', { projectId, yamlContent });
+  },
+
+  /**
+   * Import multiple scenarios from project YAML
+   */
+  async importProjectScenariosYaml(projectId: string, yamlContent: string): Promise<TestScenario[]> {
+    return invoke('import_project_scenarios_yaml', { projectId, yamlContent });
+  },
+
+  /**
+   * Get YAML template for AI tools
+   */
+  async getYamlTemplate(): Promise<string> {
+    return invoke('get_yaml_template');
   },
 };

@@ -265,6 +265,32 @@ pub fn get_all_projects() -> Result<Vec<Project>, String> {
     Ok(projects)
 }
 
+/// Get a single project by ID
+pub fn get_project(project_id: &str) -> Result<Option<Project>, String> {
+    let conn = Connection::open(get_db_path())
+        .map_err(|e| format!("DB connection error: {}", e))?;
+
+    let mut stmt = conn.prepare("SELECT id, name, path, created_at, last_scanned, base_url FROM projects WHERE id = ?")
+        .map_err(|e| format!("Prepare error: {}", e))?;
+
+    let project_result = stmt.query_row([project_id], |row| {
+        Ok(Project {
+            id: row.get(0)?,
+            name: row.get(1)?,
+            path: row.get(2)?,
+            created_at: row.get(3)?,
+            last_scanned: row.get(4)?,
+            base_url: row.get(5)?,
+        })
+    });
+
+    match project_result {
+        Ok(p) => Ok(Some(p)),
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+        Err(e) => Err(format!("Query error: {}", e)),
+    }
+}
+
 pub fn delete_project(project_id: String) -> Result<(), String> {
     let conn = Connection::open(get_db_path())
         .map_err(|e| format!("DB error: {}", e))?;

@@ -1,4 +1,11 @@
 use crate::{database, http_client, scanner, scenario, security, types::*};
+use scenario::yaml::{
+    ScenarioYaml, ProjectScenariosYaml, ScenarioImportPreview, ProjectImportPreview,
+    parse_scenario_yaml, parse_project_scenarios_yaml,
+    scenario_to_yaml_string, project_scenarios_to_yaml_string,
+    yaml_to_scenario_with_steps, create_import_preview, create_project_import_preview,
+    generate_yaml_template,
+};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use tauri_plugin_dialog::DialogExt;
@@ -476,4 +483,119 @@ pub async fn get_test_scenario_runs(
     scenario_id: String,
 ) -> Result<Vec<scenario::types::TestScenarioRun>, String> {
     database::get_test_scenario_runs(&scenario_id)
+}
+
+// ============================================================================
+// YAML Export/Import Commands
+// ============================================================================
+
+/// Export a single scenario to YAML string
+#[tauri::command]
+pub async fn export_scenario_yaml(
+    scenario_id: String,
+    base_url: Option<String>,
+) -> Result<String, String> {
+    let scenario = database::get_test_scenario(&scenario_id)?
+        .ok_or_else(|| "Scenario not found".to_string())?;
+    let steps = database::get_test_scenario_steps(&scenario_id)?;
+    
+    scenario_to_yaml_string(&scenario, &steps, base_url)
+}
+
+/// Export all scenarios in a project to YAML string
+#[tauri::command]
+pub async fn export_project_scenarios_yaml(
+    project_id: String,
+) -> Result<String, String> {
+    // Get project info
+    let project = database::get_project(&project_id)?
+        .ok_or_else(|| "Project not found".to_string())?;
+    
+    // Get all scenarios for the project
+    let scenarios = database::get_test_scenarios_by_project(&project_id)?;
+    
+    // Get steps for each scenario
+    let mut scenarios_with_steps = Vec::new();
+    for scenario in &scenarios {
+        let steps = database::get_test_scenario_steps(&scenario.id)?;
+        scenarios_with_steps.push((scenario, steps));
+    }
+    
+    // Convert to references for the function
+    let scenarios_refs: Vec<(&scenario::types::TestScenario, &[scenario::types::TestScenarioStep])> = 
+        scenarios_with_steps.iter()
+            .map(|(s, steps)| (*s, steps.as_slice()))
+            .collect();
+    
+    project_scenarios_to_yaml_string(&project.name, project.base_url, scenarios_refs)
+}
+
+/// Preview a scenario import from YAML (dry run)
+#[tauri::command]
+pub async fn preview_scenario_yaml_import(
+    yaml_content: String,
+) -> Result<ScenarioImportPreview, String> {
+    let yaml = parse_scenario_yaml(&yaml_content)?;
+    Ok(create_import_preview(&yaml))
+}
+
+/// Preview a project scenarios import from YAML (dry run)
+#[tauri::command]
+pub async fn preview_project_scenarios_yaml_import(
+    yaml_content: String,
+) -> Result<ProjectImportPreview, String> {
+    let yaml = parse_project_scenarios_yaml(&yaml_content)?;
+    Ok(create_project_import_preview(&yaml))
+}
+
+/// Import a single scenario from YAML
+#[tauri::command]
+pub async fn import_scenario_yaml(
+    project_id: String,
+    yaml_content: String,
+) -> Result<scenario::types::TestScenario, String> {
+    let yaml = parse_scenario_yaml(&yaml_content)?;
+    let (scenario, steps) = yaml_to_scenario_with_steps(&yaml, &project_id);
+    
+    // Save scenario
+    database::save_test_scenario(scenario.clone())?;
+    
+    // Save steps
+    for step in steps {
+        database::save_test_scenario_step(step)?;
+    }
+    
+    Ok(scenario)
+}
+
+/// Import multiple scenarios from project YAML
+#[tauri::command]
+pub async fn import_project_scenarios_yaml(
+    project_id: String,
+    yaml_content: String,
+) -> Result<Vec<scenario::types::TestScenario>, String> {
+    let yaml = parse_project_scenarios_yaml(&yaml_content)?;
+    let mut imported_scenarios = Vec::new();
+    
+    for scenario_yaml in &yaml.scenarios {
+        let (scenario, steps) = yaml_to_scenario_with_steps(scenario_yaml, &project_id);
+        
+        // Save scenario
+        database::save_test_scenario(scenario.clone())?;
+        
+        // Save steps
+        for step in steps {
+            database::save_test_scenario_step(step)?;
+        }
+        
+        imported_scenarios.push(scenario);
+    }
+    
+    Ok(imported_scenarios)
+}
+
+/// Get YAML template for AI tools
+#[tauri::command]
+pub async fn get_yaml_template() -> Result<String, String> {
+    Ok(generate_yaml_template())
 }

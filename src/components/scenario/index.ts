@@ -3,4 +3,5 @@ export { ScenarioList } from './ScenarioList';
 export { ScenarioEditor } from './ScenarioEditor';
 export { ScenarioRunner } from './ScenarioRunner';
 export { StepEditor } from './StepEditor';
+export { YamlEditor } from './YamlEditor';
 
