@@ -364,7 +364,7 @@ export function ScenarioEditor({ scenario, onRunClick }: Props) {
         <div className="flex-1 flex">
           <div className="flex-1 border-r border-slate-200">
             <ScrollArea className="h-full">
-              <div className="p-4 space-y-2">
+              <div className="p-5 space-y-3">
                 {stepsLoading ? (
                   <div className="text-center text-slate-500 py-8">Loading steps...</div>
                 ) : steps.length === 0 ? (
@@ -381,7 +381,7 @@ export function ScenarioEditor({ scenario, onRunClick }: Props) {
                   <div
                     key={step.id}
                     className={cn(
-                      'flex items-center gap-2 p-3 rounded-lg border transition-all cursor-pointer',
+                      'flex items-center gap-3 px-4 py-3.5 rounded-lg border transition-all cursor-pointer',
                       editingStep?.id === step.id
                         ? 'bg-violet-50 border-violet-200 ring-2 ring-violet-500'
                         : step.enabled
@@ -418,7 +418,7 @@ export function ScenarioEditor({ scenario, onRunClick }: Props) {
                       </div>
                     </div>
 
-                    <div className="flex items-center gap-1">
+                    <div className="flex items-center gap-1.5 ml-2">
                       <Button
                         variant="ghost"
                         size="icon"
@@ -480,7 +480,7 @@ export function ScenarioEditor({ scenario, onRunClick }: Props) {
               {/* Add Step Button */}
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
-                  <Button variant="outline" className="w-full" disabled={isAdding}>
+                  <Button variant="outline" className="w-full mt-4" disabled={isAdding}>
                     <Plus className="w-4 h-4 mr-1.5" />
                     Add Step
                   </Button>

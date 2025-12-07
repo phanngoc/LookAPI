@@ -1,10 +1,10 @@
 use crate::{database, http_client, scanner, scenario, security, types::*};
 use scenario::yaml::{
-    ScenarioYaml, ProjectScenariosYaml, ScenarioImportPreview, ProjectImportPreview,
+    ScenarioImportPreview, ProjectImportPreview,
     parse_scenario_yaml, parse_project_scenarios_yaml,
     scenario_to_yaml_string, project_scenarios_to_yaml_string,
     yaml_to_scenario_with_steps, create_import_preview, create_project_import_preview,
-    generate_yaml_template,
+    generate_yaml_template, generate_yaml_template_with_ai,
 };
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -598,4 +598,51 @@ pub async fn import_project_scenarios_yaml(
 #[tauri::command]
 pub async fn get_yaml_template() -> Result<String, String> {
     Ok(generate_yaml_template())
+}
+
+/// Generate YAML template using AI (Copilot CLI)
+/// 
+/// This command uses Copilot CLI to generate a test scenario YAML template
+/// based on the project context and user prompt.
+#[tauri::command]
+pub async fn generate_yaml_with_ai(
+    project_path: String,
+    user_prompt: String,
+    project_id: Option<String>,
+    base_url: Option<String>,
+) -> Result<String, String> {
+    log::info!("[Command] generate_yaml_with_ai called for project: {}", project_path);
+    
+    // Get endpoints if project_id is provided
+    let endpoints = match &project_id {
+        Some(id) => {
+            match database::get_endpoints_by_project(id.clone()) {
+                Ok(eps) => Some(eps),
+                Err(e) => {
+                    log::warn!("Failed to get endpoints for project {}: {}", id, e);
+                    None
+                }
+            }
+        }
+        None => None
+    };
+    
+    // Generate YAML using AI
+    let result = generate_yaml_template_with_ai(
+        &project_path,
+        &user_prompt,
+        endpoints.as_deref(),
+        base_url.as_deref(),
+    ).await;
+    
+    match result {
+        Ok(yaml) => {
+            log::info!("[Command] AI generation successful");
+            Ok(yaml)
+        }
+        Err(e) => {
+            log::error!("[Command] AI generation failed: {}", e);
+            Err(e)
+        }
+    }
 }

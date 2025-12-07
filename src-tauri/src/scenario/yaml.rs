@@ -5,7 +5,10 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::path::Path;
+use tokio::process::Command;
 use super::types::*;
+use crate::types::ApiEndpoint;
 
 /// YAML format for a single test scenario
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -612,6 +615,249 @@ steps:
         operator: equals
         expected: 200
 "#.to_string()
+}
+
+/// Generate a YAML template using AI (Copilot CLI)
+/// 
+/// This function calls the Copilot CLI to generate a test scenario YAML template
+/// based on the project context and user prompt.
+/// 
+/// # Arguments
+/// * `project_path` - Path to the project directory where Copilot CLI will run
+/// * `user_prompt` - User's prompt describing what kind of test scenario to generate
+/// * `endpoints` - Optional list of API endpoints to include in the context
+/// * `base_url` - Optional base URL for the API
+/// 
+/// # Returns
+/// * `Ok(String)` - Generated YAML template
+/// * `Err(String)` - Error message if generation fails
+pub async fn generate_yaml_template_with_ai(
+    project_path: &str,
+    user_prompt: &str,
+    endpoints: Option<&[ApiEndpoint]>,
+    base_url: Option<&str>,
+) -> Result<String, String> {
+    // Build context from endpoints
+    let endpoints_context = build_endpoints_context(endpoints);
+    
+    // Build the full prompt with YAML schema information
+    let full_prompt = build_ai_prompt(user_prompt, &endpoints_context, base_url);
+    
+    // Execute Copilot CLI
+    match execute_copilot_cli(project_path, &full_prompt).await {
+        Ok(output) => {
+            // Try to extract YAML from the output
+            match extract_yaml_from_output(&output) {
+                Some(yaml) => Ok(yaml),
+                None => {
+                    log::warn!("Could not extract YAML from Copilot output, returning raw output");
+                    // If we can't extract YAML, return the output as-is if it looks like YAML
+                    if output.contains("name:") && output.contains("steps:") {
+                        Ok(output)
+                    } else {
+                        Err(format!("Copilot CLI did not generate valid YAML. Output: {}", output))
+                    }
+                }
+            }
+        }
+        Err(e) => {
+            log::error!("Copilot CLI failed: {}", e);
+            Err(e)
+        }
+    }
+}
+
+/// Build context string from API endpoints
+fn build_endpoints_context(endpoints: Option<&[ApiEndpoint]>) -> String {
+    match endpoints {
+        Some(eps) if !eps.is_empty() => {
+            let mut context = String::from("Available API endpoints:\n");
+            for ep in eps.iter().take(20) { // Limit to 20 endpoints to avoid prompt being too long
+                context.push_str(&format!(
+                    "- {} {} - {}\n",
+                    ep.method,
+                    ep.path,
+                    ep.description
+                ));
+                
+                // Add parameters if any
+                if !ep.parameters.is_empty() {
+                    context.push_str("  Parameters:\n");
+                    for param in &ep.parameters {
+                        let required = if param.required { "(required)" } else { "(optional)" };
+                        context.push_str(&format!(
+                            "    - {}: {} {}\n",
+                            param.name,
+                            param.param_type,
+                            required
+                        ));
+                    }
+                }
+            }
+            if eps.len() > 20 {
+                context.push_str(&format!("  ... and {} more endpoints\n", eps.len() - 20));
+            }
+            context
+        }
+        _ => String::new()
+    }
+}
+
+/// Build the full AI prompt with YAML schema information
+fn build_ai_prompt(user_prompt: &str, endpoints_context: &str, base_url: Option<&str>) -> String {
+    let base_url_info = match base_url {
+        Some(url) => format!("Base URL: {}\n", url),
+        None => String::new()
+    };
+    
+    format!(
+        r#"Generate a test scenario YAML file for API testing. The YAML must follow this exact schema:
+
+```yaml
+name: "Scenario Name"
+description: "Description of what this scenario tests"
+priority: medium  # Options: low, medium, high
+
+variables:
+  baseUrl: "http://localhost:3000"
+  # Add any variables needed
+
+steps:
+  # HTTP Request Step
+  - name: "Step Name"
+    request:
+      method: GET|POST|PUT|DELETE|PATCH
+      url: "{{{{ baseUrl }}}}/api/path"
+      headers:
+        Content-Type: "application/json"
+      body:  # For POST/PUT/PATCH
+        key: "value"
+    extract:  # Extract values from response
+      - name: variableName
+        source: body|header|status
+        path: json.path.to.value
+    assertions:
+      - name: "Assertion description"
+        source: status|body|header|duration
+        operator: equals|notEquals|contains|matches|greaterThan|lessThan|exists
+        expected: value
+
+  # Delay Step
+  - name: "Wait"
+    delay:
+      duration: 1000  # milliseconds
+
+  # Script Step (JavaScript)
+  - name: "Custom Script"
+    script:
+      code: |
+        // Access variables with 'variables' object
+        // Access last response with 'response' object
+        console.log(variables.token);
+```
+
+{base_url_info}
+{endpoints_context}
+
+User request: {user_prompt}
+
+Generate ONLY the YAML content, no explanations. The YAML should be valid and ready to use."#,
+        base_url_info = base_url_info,
+        endpoints_context = endpoints_context,
+        user_prompt = user_prompt
+    )
+}
+
+/// Execute Copilot CLI command in the project directory
+async fn execute_copilot_cli(project_path: &str, prompt: &str) -> Result<String, String> {
+    let path = Path::new(project_path);
+    
+    if !path.exists() {
+        return Err(format!("Project path does not exist: {}", project_path));
+    }
+    
+    // Escape the prompt for shell
+    let escaped_prompt = prompt.replace('\'', "'\\''");
+    
+    // Build the copilot command with safety flags
+    let output = Command::new("copilot")
+        .arg("-p")
+        .arg(&escaped_prompt)
+        .arg("--allow-all-tools")
+        .arg("--deny-tool").arg("shell(cd)")
+        .arg("--deny-tool").arg("shell(git)")
+        .arg("--deny-tool").arg("shell(pwd)")
+        .arg("--deny-tool").arg("fetch")
+        .arg("--deny-tool").arg("extensions")
+        .arg("--deny-tool").arg("websearch")
+        .arg("--deny-tool").arg("githubRepo")
+        .current_dir(path)
+        .output()
+        .await
+        .map_err(|e| {
+            if e.kind() == std::io::ErrorKind::NotFound {
+                "Copilot CLI is not installed. Please install it first: npm install -g @githubnext/github-copilot-cli".to_string()
+            } else {
+                format!("Failed to execute Copilot CLI: {}", e)
+            }
+        })?;
+    
+    if output.status.success() {
+        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+        Ok(stdout)
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+        Err(format!("Copilot CLI failed: {}", stderr))
+    }
+}
+
+/// Extract YAML content from Copilot CLI output
+fn extract_yaml_from_output(output: &str) -> Option<String> {
+    // Try to find YAML content between ```yaml and ``` markers
+    if let Some(start) = output.find("```yaml") {
+        let yaml_start = start + 7; // Length of "```yaml"
+        if let Some(end) = output[yaml_start..].find("```") {
+            let yaml = output[yaml_start..yaml_start + end].trim();
+            return Some(yaml.to_string());
+        }
+    }
+    
+    // Try to find YAML content between ``` and ``` markers
+    if let Some(start) = output.find("```\n") {
+        let yaml_start = start + 4; // Length of "```\n"
+        if let Some(end) = output[yaml_start..].find("```") {
+            let yaml = output[yaml_start..yaml_start + end].trim();
+            if yaml.contains("name:") && yaml.contains("steps:") {
+                return Some(yaml.to_string());
+            }
+        }
+    }
+    
+    // If output itself looks like YAML (starts with name: or has YAML structure)
+    let trimmed = output.trim();
+    if trimmed.starts_with("name:") || (trimmed.contains("name:") && trimmed.contains("steps:")) {
+        // Find the actual YAML part (might have some text before/after)
+        let lines: Vec<&str> = trimmed.lines().collect();
+        let mut yaml_lines = Vec::new();
+        let mut in_yaml = false;
+        
+        for line in lines {
+            if line.starts_with("name:") || (in_yaml && (line.starts_with(' ') || line.starts_with('-') || line.contains(':'))) {
+                in_yaml = true;
+                yaml_lines.push(line);
+            } else if in_yaml && line.trim().is_empty() {
+                yaml_lines.push(line);
+            } else if in_yaml && !line.starts_with(' ') && !line.starts_with('-') && !line.contains(':') {
+                break;
+            }
+        }
+        
+        if !yaml_lines.is_empty() {
+            return Some(yaml_lines.join("\n"));
+        }
+    }
+    
+    None
 }
 
 #[cfg(test)]

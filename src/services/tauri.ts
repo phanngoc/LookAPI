@@ -214,4 +214,27 @@ export const tauriService = {
   async getYamlTemplate(): Promise<string> {
     return invoke('get_yaml_template');
   },
+
+  /**
+   * Generate YAML template using AI (Copilot CLI)
+   * 
+   * @param projectPath - Path to the project directory where Copilot CLI will run
+   * @param userPrompt - User's prompt describing what kind of test scenario to generate
+   * @param projectId - Optional project ID to include endpoints context
+   * @param baseUrl - Optional base URL for the API
+   * @returns Generated YAML template string
+   */
+  async generateYamlWithAI(
+    projectPath: string,
+    userPrompt: string,
+    projectId?: string,
+    baseUrl?: string
+  ): Promise<string> {
+    return invoke('generate_yaml_with_ai', { 
+      projectPath, 
+      userPrompt, 
+      projectId, 
+      baseUrl 
+    });
+  },
 };

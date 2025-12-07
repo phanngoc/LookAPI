@@ -73,6 +73,7 @@ pub fn run() {
             commands::import_scenario_yaml,
             commands::import_project_scenarios_yaml,
             commands::get_yaml_template,
+            commands::generate_yaml_with_ai,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -9,13 +9,25 @@ import {
   FileCode,
   RefreshCw,
   FileText,
+  Sparkles,
+  Loader2,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import { Textarea } from '@/components/ui/textarea';
 import { cn } from '@/lib/utils';
 import { tauriService } from '@/services/tauri';
 import { ScenarioImportPreview, ProjectImportPreview } from '@/types/yaml';
+import { useProject } from '@/contexts/ProjectContext';
 
 interface YamlEditorProps {
   value: string;
@@ -40,12 +52,19 @@ export function YamlEditor({
   mode = 'single',
   className,
 }: YamlEditorProps) {
+  const { currentProject } = useProject();
   const [content, setContent] = useState(value);
   const [isValid, setIsValid] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [preview, setPreview] = useState<ScenarioImportPreview | ProjectImportPreview | null>(null);
   const [isValidating, setIsValidating] = useState(false);
   const [copied, setCopied] = useState(false);
+  
+  // AI Generation states
+  const [showAIDialog, setShowAIDialog] = useState(false);
+  const [aiPrompt, setAIPrompt] = useState('');
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [aiError, setAIError] = useState<string | null>(null);
 
   // Validate YAML content
   const validateYaml = useCallback(async (yamlContent: string) => {
@@ -138,6 +157,43 @@ export function YamlEditor({
     }
   };
 
+  const handleOpenAIDialog = () => {
+    if (!currentProject) {
+      setAIError('Please select a project first to use AI generation');
+      return;
+    }
+    setAIError(null);
+    setAIPrompt('');
+    setShowAIDialog(true);
+  };
+
+  const handleGenerateWithAI = async () => {
+    if (!currentProject || !aiPrompt.trim()) return;
+    
+    setIsGenerating(true);
+    setAIError(null);
+    
+    try {
+      const generatedYaml = await tauriService.generateYamlWithAI(
+        currentProject.path,
+        aiPrompt,
+        currentProject.id,
+        currentProject.baseUrl || undefined
+      );
+      
+      setContent(generatedYaml);
+      onChange?.(generatedYaml);
+      setShowAIDialog(false);
+      setAIPrompt('');
+    } catch (e) {
+      const errorMessage = e instanceof Error ? e.message : String(e);
+      setAIError(errorMessage);
+      console.error('Failed to generate with AI:', e);
+    } finally {
+      setIsGenerating(false);
+    }
+  };
+
   const handleImport = () => {
     if (isValid && onImport) {
       onImport(content);
@@ -169,6 +225,15 @@ export function YamlEditor({
             )}
           </div>
           <div className="flex items-center gap-1">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={handleOpenAIDialog}
+              title="Generate with AI (Copilot CLI)"
+              className="text-purple-600 hover:text-purple-700 hover:bg-purple-50"
+            >
+              <Sparkles className="w-4 h-4" />
+            </Button>
             <Button
               variant="ghost"
               size="sm"
@@ -296,6 +361,80 @@ export function YamlEditor({
           </Button>
         </div>
       )}
+
+      {/* AI Generation Dialog */}
+      <Dialog open={showAIDialog} onOpenChange={setShowAIDialog}>
+        <DialogContent className="sm:max-w-[500px]">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Sparkles className="w-5 h-5 text-purple-500" />
+              Generate Test Scenario with AI
+            </DialogTitle>
+            <DialogDescription>
+              Describe what kind of test scenario you want to generate. The AI will use your project's API endpoints as context.
+            </DialogDescription>
+          </DialogHeader>
+          
+          <div className="space-y-4 py-4">
+            {currentProject && (
+              <div className="p-3 bg-slate-50 rounded-lg border border-slate-200">
+                <p className="text-xs text-slate-500 mb-1">Project</p>
+                <p className="text-sm font-medium text-slate-900">{currentProject.name}</p>
+                <p className="text-xs text-slate-500 truncate">{currentProject.path}</p>
+              </div>
+            )}
+            
+            <div className="space-y-2">
+              <label className="text-sm font-medium text-slate-700">
+                Describe your test scenario
+              </label>
+              <Textarea
+                placeholder="E.g., Create a test scenario for user authentication flow including login, get profile, and logout..."
+                value={aiPrompt}
+                onChange={(e) => setAIPrompt(e.target.value)}
+                className="min-h-[120px] resize-none"
+                disabled={isGenerating}
+              />
+            </div>
+            
+            {aiError && (
+              <div className="p-3 bg-red-50 border border-red-200 rounded-lg">
+                <div className="flex items-start gap-2">
+                  <AlertCircle className="w-4 h-4 text-red-500 mt-0.5 shrink-0" />
+                  <p className="text-sm text-red-700">{aiError}</p>
+                </div>
+              </div>
+            )}
+          </div>
+          
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setShowAIDialog(false)}
+              disabled={isGenerating}
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={handleGenerateWithAI}
+              disabled={!aiPrompt.trim() || isGenerating}
+              className="bg-purple-600 hover:bg-purple-700"
+            >
+              {isGenerating ? (
+                <>
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  Generating...
+                </>
+              ) : (
+                <>
+                  <Sparkles className="w-4 h-4 mr-2" />
+                  Generate
+                </>
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
