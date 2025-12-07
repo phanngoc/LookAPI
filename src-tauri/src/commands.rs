@@ -442,6 +442,17 @@ pub async fn run_test_scenario(
     let steps = database::get_test_scenario_steps(&scenario_id)?;
     log::info!("[Command] Loaded {} steps for scenario", steps.len());
     
+    // Get project to retrieve base_url
+    let project = database::get_project(&scenario.project_id)?
+        .ok_or_else(|| {
+            let error = format!("Project not found: {}", scenario.project_id);
+            log::error!("[Command] {}", error);
+            error
+        })?;
+    
+    let base_url = project.base_url.clone();
+    log::info!("[Command] Project base URL: {:?}", base_url);
+    
     // Run scenario in a spawned task to avoid blocking
     log::info!("[Command] Spawning blocking task to execute scenario");
     let app_clone = app.clone();
@@ -451,7 +462,7 @@ pub async fn run_test_scenario(
     let start = std::time::Instant::now();
     let run = tauri::async_runtime::spawn_blocking(move || {
         log::info!("[Command] Blocking task started for scenario: {}", scenario_clone.name);
-        scenario::executor::run_scenario(&scenario_clone, &steps_clone, Some(&app_clone))
+        scenario::executor::run_scenario(&scenario_clone, &steps_clone, Some(&app_clone), base_url)
     })
     .await
     .map_err(|e| {

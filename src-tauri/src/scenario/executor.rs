@@ -9,6 +9,7 @@ use tauri::{AppHandle, Emitter};
 pub struct ScenarioExecutor {
     client: Client,
     variables: HashMap<String, serde_json::Value>,
+    base_url: Option<String>,
     #[allow(dead_code)]
     timeout: Duration,
 }
@@ -30,12 +31,18 @@ impl ScenarioExecutor {
         Self {
             client,
             variables: HashMap::new(),
+            base_url: None,
             timeout: Duration::from_secs(30),
         }
     }
 
     pub fn with_variables(mut self, variables: HashMap<String, serde_json::Value>) -> Self {
         self.variables = variables;
+        self
+    }
+
+    pub fn with_base_url(mut self, base_url: Option<String>) -> Self {
+        self.base_url = base_url;
         self
     }
 
@@ -63,6 +70,19 @@ impl ScenarioExecutor {
         } else {
             log::debug!("[Executor] No variables defined in scenario");
         }
+
+        // Inject baseUrl from project's base_url (override if exists in scenario)
+        let base_url_value = match &self.base_url {
+            Some(url) => {
+                log::debug!("[Executor] Injecting baseUrl variable from project: {}", url);
+                url.clone()
+            },
+            None => {
+                log::debug!("[Executor] No project base_url, using default for baseUrl: http://localhost:8080");
+                "http://localhost:8080".to_string()
+            }
+        };
+        self.variables.insert("baseUrl".to_string(), serde_json::Value::String(base_url_value));
 
         // Filter enabled steps and sort by order
         let mut enabled_steps: Vec<_> = steps.iter().filter(|s| s.enabled).collect();
@@ -274,13 +294,17 @@ impl ScenarioExecutor {
 
         // Resolve variables in URL
         let original_url = config.url.clone();
-        let url = self.resolve_variables(&config.url);
+        let url_after_vars = self.resolve_variables(&config.url);
+        
+        // Resolve URL with base URL if needed
+        let url = self.resolve_url(&url_after_vars);
         let method = config.method.to_uppercase();
         
-        if original_url != url {
-            log::debug!("[Executor] URL after variable resolution: {} -> {}", original_url, url);
-        } else {
-            log::debug!("[Executor] Request URL: {}", url);
+        if original_url != url_after_vars {
+            log::debug!("[Executor] URL after variable resolution: {} -> {}", original_url, url_after_vars);
+        }
+        if url_after_vars != url {
+            log::debug!("[Executor] URL after base URL resolution: {} -> {}", url_after_vars, url);
         }
         log::info!("[Executor] Request: {} {}", method, url);
 
@@ -554,9 +578,41 @@ impl ScenarioExecutor {
         }
     }
 
+    /// Resolve URL with base URL if needed
+    fn resolve_url(&self, url: &str) -> String {
+        // If URL is already absolute, use it as-is
+        if url.starts_with("http://") || url.starts_with("https://") {
+            log::debug!("[Executor] URL is already absolute: {}", url);
+            return url.to_string();
+        }
+
+        // If URL is relative (starts with /), prepend base_url
+        if url.starts_with("/") {
+            let base = match &self.base_url {
+                Some(base) => {
+                    // Remove trailing slash from base_url
+                    let clean_base = base.trim_end_matches('/');
+                    format!("{}{}", clean_base, url)
+                },
+                None => {
+                    // Use default base URL if not provided
+                    log::debug!("[Executor] No base URL provided, using default: http://localhost:8080");
+                    format!("http://localhost:8080{}", url)
+                }
+            };
+            log::debug!("[Executor] Resolved relative URL: {} -> {}", url, base);
+            return base;
+        }
+
+        // If URL doesn't start with /, return as-is (might be a path without leading slash)
+        log::debug!("[Executor] URL doesn't match absolute or relative pattern, using as-is: {}", url);
+        url.to_string()
+    }
+
     /// Resolve variables in a string ({{variable_name}} syntax)
+    /// Supports both {{var}} and {{ var }} formats (with optional spaces)
     fn resolve_variables(&self, input: &str) -> String {
-        let re = Regex::new(r"\{\{(\w+)\}\}").unwrap();
+        let re = Regex::new(r"\{\{\s*(\w+)\s*\}\}").unwrap();
         let mut result = input.to_string();
 
         for cap in re.captures_iter(input) {
@@ -781,9 +837,12 @@ pub fn run_scenario(
     scenario: &TestScenario,
     steps: &[TestScenarioStep],
     app_handle: Option<&AppHandle>,
+    base_url: Option<String>,
 ) -> TestScenarioRun {
     log::info!("[Executor] run_scenario called for scenario: {}", scenario.name);
-    let mut executor = ScenarioExecutor::new();
+    log::info!("[Executor] Base URL: {:?}", base_url);
+    let mut executor = ScenarioExecutor::new()
+        .with_base_url(base_url);
     executor.execute_scenario(scenario, steps, app_handle)
 }
 
