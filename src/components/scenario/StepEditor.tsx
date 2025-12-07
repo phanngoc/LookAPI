@@ -37,7 +37,7 @@ export function StepEditor({ step, onClose, onSave, projectId }: Props) {
   const [name, setName] = useState(step.name);
   const [config, setConfig] = useState<any>(step.config);
   const [isSaving, setIsSaving] = useState(false);
-  const [endpointMode, setEndpointMode] = useState<'endpoint' | 'custom'>('custom');
+  const [endpointMode, setEndpointMode] = useState<'endpoint' | 'custom'>('endpoint');
 
   const { endpoints, isLoading: endpointsLoading } = useEndpoints(projectId);
 
@@ -51,7 +51,7 @@ export function StepEditor({ step, onClose, onSave, projectId }: Props) {
       if (requestConfig.endpointId) {
         setEndpointMode('endpoint');
       } else {
-        setEndpointMode('custom');
+        setEndpointMode('endpoint');
       }
     }
   }, [step]);
