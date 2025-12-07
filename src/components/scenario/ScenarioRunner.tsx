@@ -232,7 +232,7 @@ export function ScenarioRunner({ scenario, onEditClick }: Props) {
                 >
                   <Card
                     className={cn(
-                      'transition-all duration-300 ease-in-out',
+                      'transition-all duration-300 ease-in-out mb-3',
                       stepStatus === 'failed' && 'border-red-200 bg-red-50/30',
                       stepStatus === 'passed' && 'border-emerald-200 bg-emerald-50/30',
                       stepStatus === 'running' && 'border-blue-200 bg-blue-50/30 shadow-md',

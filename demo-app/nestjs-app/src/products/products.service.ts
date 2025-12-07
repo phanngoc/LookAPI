@@ -40,7 +40,7 @@ export class ProductsService {
     const [products, total] = await queryBuilder.getManyAndCount();
 
     return {
-      data: products,
+      products,
       meta: {
         total,
         page,

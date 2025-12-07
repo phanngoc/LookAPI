@@ -388,7 +388,7 @@ export function ScenarioEditor({ scenario, onRunClick }: Props) {
                   <div
                     key={step.id}
                     className={cn(
-                      'flex items-center gap-3 px-4 py-3.5 rounded-lg border transition-all cursor-pointer',
+                      'flex items-center gap-3 px-4 py-3.5 rounded-lg border transition-all cursor-pointer mb-3',
                       editingStep?.id === step.id
                         ? 'bg-violet-50 border-violet-200 ring-2 ring-violet-500'
                         : step.enabled

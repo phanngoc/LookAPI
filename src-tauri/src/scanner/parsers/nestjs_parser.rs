@@ -19,6 +19,7 @@ pub struct NestJSParser {
     project_path: PathBuf,
     controller_files_cache: HashMap<String, String>,
     dto_files_cache: HashMap<String, String>,
+    global_prefix: Option<String>,
 }
 
 impl NestJSParser {
@@ -27,10 +28,41 @@ impl NestJSParser {
             project_path,
             controller_files_cache: HashMap::new(),
             dto_files_cache: HashMap::new(),
+            global_prefix: None,
         }
     }
 
+    fn extract_global_prefix(&self) -> Option<String> {
+        // Try to find main.ts or main.js in src/ directory
+        let possible_paths = vec![
+            self.project_path.join("src/main.ts"),
+            self.project_path.join("src/main.js"),
+        ];
+
+        for main_path in possible_paths {
+            if let Ok(content) = fs::read_to_string(&main_path) {
+                // Match pattern: app.setGlobalPrefix('...') or app.setGlobalPrefix("...")
+                let prefix_re = Regex::new(r#"app\.setGlobalPrefix\s*\(\s*(?:'([^']+)'|"([^"]+)")\s*\)"#).ok()?;
+                
+                if let Some(cap) = prefix_re.captures(&content) {
+                    // Get prefix from either single or double quote capture group
+                    if let Some(prefix_match) = cap.get(1).or_else(|| cap.get(2)) {
+                        let prefix = prefix_match.as_str();
+                        if !prefix.is_empty() {
+                            return Some(prefix.to_string());
+                        }
+                    }
+                }
+            }
+        }
+
+        None
+    }
+
     pub async fn parse_endpoints(&mut self) -> Result<Vec<ScannedEndpoint>, String> {
+        // Step 0: Extract global prefix from main.ts
+        self.global_prefix = self.extract_global_prefix();
+
         // Step 1: Build caches
         self.build_controller_files_cache().await?;
         self.build_dto_files_cache().await?;
@@ -267,7 +299,7 @@ impl NestJSParser {
             format!("/{}", method_path)
         };
 
-        if base.is_empty() {
+        let mut full_path = if base.is_empty() {
             if method.is_empty() {
                 "/".to_string()
             } else {
@@ -277,7 +309,26 @@ impl NestJSParser {
             base
         } else {
             format!("{}{}", base, method)
+        };
+
+        // Add global prefix if present
+        if let Some(ref prefix) = self.global_prefix {
+            if !prefix.is_empty() {
+                let prefix_with_slash = if prefix.starts_with('/') {
+                    prefix.clone()
+                } else {
+                    format!("/{}", prefix)
+                };
+                // Ensure no double slash
+                if full_path == "/" {
+                    full_path = prefix_with_slash;
+                } else {
+                    full_path = format!("{}{}", prefix_with_slash, full_path);
+                }
+            }
         }
+
+        full_path
     }
 
     fn create_endpoint(
