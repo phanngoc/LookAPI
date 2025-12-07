@@ -4,11 +4,8 @@ import {
   AlertCircle,
   CheckCircle,
   Copy,
-  Download,
-  Upload,
   FileCode,
   RefreshCw,
-  FileText,
   Sparkles,
   Loader2,
   Save,
@@ -128,41 +125,6 @@ export function YamlEditor({
     await navigator.clipboard.writeText(content);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
-  };
-
-  const handleDownload = () => {
-    const blob = new Blob([content], { type: 'text/yaml' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = mode === 'project' ? 'project-scenarios.yaml' : 'scenario.yaml';
-    a.click();
-    URL.revokeObjectURL(url);
-  };
-
-  const handleUpload = () => {
-    const input = document.createElement('input');
-    input.type = 'file';
-    input.accept = '.yaml,.yml';
-    input.onchange = async (e) => {
-      const file = (e.target as HTMLInputElement).files?.[0];
-      if (file) {
-        const text = await file.text();
-        setContent(text);
-        onChange?.(text);
-      }
-    };
-    input.click();
-  };
-
-  const handleLoadTemplate = async () => {
-    try {
-      const template = await tauriService.getYamlTemplate();
-      setContent(template);
-      onChange?.(template);
-    } catch (e) {
-      console.error('Failed to load template:', e);
-    }
   };
 
   const handleOpenAIDialog = () => {
@@ -341,31 +303,6 @@ export function YamlEditor({
             <Button
               variant="ghost"
               size="sm"
-              onClick={handleLoadTemplate}
-              title="Load template"
-            >
-              <FileText className="w-4 h-4" />
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={handleUpload}
-              title="Upload YAML file"
-            >
-              <Upload className="w-4 h-4" />
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={handleDownload}
-              disabled={!content.trim()}
-              title="Download YAML file"
-            >
-              <Download className="w-4 h-4" />
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
               onClick={handleCopy}
               disabled={!content.trim()}
               title="Copy to clipboard"
@@ -444,7 +381,7 @@ export function YamlEditor({
 
                 {!preview && !error && !content.trim() && (
                   <p className="text-xs text-slate-400 text-center py-4">
-                    Enter YAML content or upload a file
+                    Enter YAML content
                   </p>
                 )}
               </div>

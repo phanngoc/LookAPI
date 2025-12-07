@@ -284,6 +284,7 @@ impl ScenarioExecutor {
                     step_type: step.step_type.clone(),
                     status: StepResultStatus::Error,
                     duration_ms: None,
+                    request: None,
                     response: None,
                     assertions: None,
                     error: Some(error_msg),
@@ -308,6 +309,9 @@ impl ScenarioExecutor {
         }
         log::info!("[Executor] Request: {} {}", method, url);
 
+        let mut request_headers = HashMap::new();
+        let mut request_body = None;
+
         // Build request
         log::debug!("[Executor] Building {} request", method);
         let mut req = match method.as_str() {
@@ -325,6 +329,7 @@ impl ScenarioExecutor {
                     step_type: step.step_type.clone(),
                     status: StepResultStatus::Error,
                     duration_ms: None,
+                    request: None,
                     response: None,
                     assertions: None,
                     error: Some(error_msg),
@@ -339,7 +344,8 @@ impl ScenarioExecutor {
             for (k, v) in headers {
                 let resolved_value = self.resolve_variables(v);
                 log::debug!("[Executor] Header: {} = {}", k, resolved_value);
-                req = req.header(k, resolved_value);
+                req = req.header(k, &resolved_value);
+                request_headers.insert(k.clone(), resolved_value);
             }
         } else {
             log::debug!("[Executor] No custom headers provided");
@@ -352,15 +358,25 @@ impl ScenarioExecutor {
                 log::debug!("[Executor] Adding JSON body: {}", 
                     serde_json::to_string(&resolved_body).unwrap_or_else(|_| "invalid json".to_string()));
                 req = req.json(&resolved_body);
+                request_body = Some(resolved_body);
             } else if let Some(params) = &config.params {
                 let resolved_params = self.resolve_variables_in_json(params);
                 log::debug!("[Executor] Adding JSON params: {}", 
                     serde_json::to_string(&resolved_params).unwrap_or_else(|_| "invalid json".to_string()));
                 req = req.json(&resolved_params);
+                request_body = Some(resolved_params);
             } else {
                 log::debug!("[Executor] No body or params for {} request", method);
             }
         }
+
+        // Create StepRequest object
+        let step_request = StepRequest {
+            method: method.clone(),
+            url: url.clone(),
+            headers: request_headers,
+            body: request_body,
+        };
 
         // Execute request
         log::info!("[Executor] Sending {} request to {}", method, url);
@@ -393,6 +409,7 @@ impl ScenarioExecutor {
                     step_type: step.step_type.clone(),
                     status: StepResultStatus::Error,
                     duration_ms: Some(duration_ms),
+                    request: Some(step_request),
                     response: None,
                     assertions: None,
                     error: Some(error_msg),
@@ -470,6 +487,7 @@ impl ScenarioExecutor {
             step_type: step.step_type.clone(),
             status,
             duration_ms: Some(duration_ms),
+            request: Some(step_request),
             response: Some(step_response),
             assertions: Some(assertions_results),
             error: None,
@@ -488,6 +506,7 @@ impl ScenarioExecutor {
                     step_type: step.step_type.clone(),
                     status: StepResultStatus::Error,
                     duration_ms: None,
+                    request: None,
                     response: None,
                     assertions: None,
                     error: Some(format!("Invalid delay config: {}", e)),
@@ -504,6 +523,7 @@ impl ScenarioExecutor {
             step_type: step.step_type.clone(),
             status: StepResultStatus::Passed,
             duration_ms: Some(config.duration_ms),
+            request: None,
             response: None,
             assertions: None,
             error: None,
@@ -522,6 +542,7 @@ impl ScenarioExecutor {
                     step_type: step.step_type.clone(),
                     status: StepResultStatus::Error,
                     duration_ms: None,
+                    request: None,
                     response: None,
                     assertions: None,
                     error: Some(format!("Invalid script config: {}", e)),
@@ -539,6 +560,7 @@ impl ScenarioExecutor {
             step_type: step.step_type.clone(),
             status: StepResultStatus::Passed,
             duration_ms: Some(0),
+            request: None,
             response: None,
             assertions: None,
             error: None,
@@ -555,6 +577,7 @@ impl ScenarioExecutor {
             step_type: step.step_type.clone(),
             status: StepResultStatus::Passed,
             duration_ms: Some(0),
+            request: None,
             response: None,
             assertions: None,
             error: None,
@@ -571,6 +594,7 @@ impl ScenarioExecutor {
             step_type: step.step_type.clone(),
             status: StepResultStatus::Passed,
             duration_ms: Some(0),
+            request: None,
             response: None,
             assertions: None,
             error: None,

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import {
   Play,
   Edit2,
@@ -296,6 +296,39 @@ export function ScenarioRunner({ scenario, onEditClick }: Props) {
                             <div className="p-3 bg-red-50 border border-red-200 rounded-lg">
                               <p className="text-sm text-red-700 font-medium">Error</p>
                               <p className="text-xs text-red-600 mt-1">{result.error}</p>
+                            </div>
+                          )}
+
+                          {/* Request */}
+                          {result.request && (
+                            <div className="space-y-2">
+                              <div className="flex items-center gap-2">
+                                <Badge
+                                  variant="outline"
+                                  className="bg-blue-50 text-blue-700 border-blue-200"
+                                >
+                                  {result.request.method} {result.request.url}
+                                </Badge>
+                              </div>
+                              <div className="rounded-lg border overflow-hidden">
+                                <div className="bg-slate-50 px-3 py-1.5 border-b">
+                                  <span className="text-xs font-medium text-slate-600">
+                                    Request Body
+                                  </span>
+                                </div>
+                                <div className="max-h-48 overflow-auto">
+                                  <CodeEditor
+                                    value={
+                                      result.request.body
+                                        ? JSON.stringify(result.request.body, null, 2)
+                                        : '{}'
+                                    }
+                                    language="json"
+                                    readOnly
+                                    height="150px"
+                                  />
+                                </div>
+                              </div>
                             </div>
                           )}
 

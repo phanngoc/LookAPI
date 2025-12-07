@@ -14,7 +14,6 @@ import {
   Settings2,
   Save,
   FileCode,
-  Download,
   Pencil,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -153,33 +152,6 @@ export function ScenarioEditor({ scenario, onRunClick }: Props) {
     }
   };
 
-  // Export current scenario to YAML file
-  const handleExportToFile = async () => {
-    setIsExporting(true);
-    try {
-      const yaml = await tauriService.exportScenarioYaml(scenario.id);
-      const blob = new Blob([yaml], { type: 'text/yaml' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `${scenario.name.replace(/[^a-z0-9]/gi, '_').toLowerCase()}.yaml`;
-      a.click();
-      URL.revokeObjectURL(url);
-      toast({
-        title: 'Exported Successfully',
-        description: 'Scenario has been exported to YAML file.',
-      });
-    } catch (e) {
-      toast({
-        title: 'Export Error',
-        description: e instanceof Error ? e.message : 'Failed to export scenario',
-        variant: 'destructive',
-      });
-    } finally {
-      setIsExporting(false);
-    }
-  };
-
   useEffect(() => {
     setName(scenario.name);
     setDescription(scenario.description || '');
@@ -313,16 +285,6 @@ export function ScenarioEditor({ scenario, onRunClick }: Props) {
             </div>
           </div>
           <div className="flex items-center gap-2">
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={handleExportToFile}
-              disabled={isExporting}
-              title="Export to YAML file"
-            >
-              <Download className="w-4 h-4 mr-1.5" />
-              Export
-            </Button>
             <Button
               variant="ghost"
               size="sm"

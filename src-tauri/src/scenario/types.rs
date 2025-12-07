@@ -270,11 +270,21 @@ pub struct TestStepResult {
     pub status: StepResultStatus,
     #[serde(rename = "durationMs")]
     pub duration_ms: Option<u64>,
+    pub request: Option<StepRequest>,
     pub response: Option<StepResponse>,
     pub assertions: Option<Vec<Assertion>>,
     pub error: Option<String>,
     #[serde(rename = "extractedVariables")]
     pub extracted_variables: Option<HashMap<String, serde_json::Value>>,
+}
+
+/// Step Request - HTTP request details sent in a step
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct StepRequest {
+    pub method: String,
+    pub url: String,
+    pub headers: HashMap<String, String>,
+    pub body: Option<serde_json::Value>,
 }
 
 /// Step Response - HTTP response from a request step
@@ -389,4 +399,3 @@ pub struct ReorderStepsRequest {
     #[serde(rename = "stepIds")]
     pub step_ids: Vec<String>, // Ordered list of step IDs
 }
-

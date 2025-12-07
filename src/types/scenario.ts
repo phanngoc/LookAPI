@@ -101,10 +101,18 @@ export interface TestStepResult {
   stepType: TestStepType;
   status: StepResultStatus;
   durationMs?: number;
+  request?: StepRequest;
   response?: StepResponse;
   assertions?: Assertion[];
   error?: string;
   extractedVariables?: Record<string, any>;
+}
+
+export interface StepRequest {
+  method: string;
+  url: string;
+  headers: Record<string, string>;
+  body?: any;
 }
 
 export interface StepResponse {

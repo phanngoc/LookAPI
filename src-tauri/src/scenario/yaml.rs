@@ -698,14 +698,69 @@ pub async fn generate_yaml_template_with_ai(
         Ok(output) => {
             // Try to extract YAML from the output
             match extract_yaml_from_output(&output) {
-                Some(yaml) => Ok(yaml),
+                Some(yaml) => {
+                    log::info!("Successfully extracted YAML from Copilot output");
+                    Ok(yaml)
+                },
                 None => {
-                    log::warn!("Could not extract YAML from Copilot output, returning raw output");
-                    // If we can't extract YAML, return the output as-is if it looks like YAML
+                    log::warn!("Could not extract YAML using extract_yaml_from_output, trying fallback strategies");
+                    
+                    // Fallback 1: If output contains "name:" and "steps:", try to use it as-is
+                    // (might have some explanatory text but YAML is there)
                     if output.contains("name:") && output.contains("steps:") {
+                        log::info!("Output contains name: and steps:, using as YAML (may contain explanatory text)");
+                        // Try to clean it up a bit - remove obvious non-YAML lines at the start
+                        let lines: Vec<&str> = output.lines().collect();
+                        let mut cleaned_lines = Vec::new();
+                        let mut found_yaml_start = false;
+                        
+                        for line in lines {
+                            let trimmed = line.trim();
+                            if trimmed.starts_with("name:") {
+                                found_yaml_start = true;
+                                cleaned_lines.push(line);
+                            } else if found_yaml_start {
+                                // Keep all lines after "name:" that look like YAML
+                                if trimmed.is_empty() || 
+                                   line.starts_with(' ') || 
+                                   line.starts_with('\t') || 
+                                   line.starts_with('-') ||
+                                   trimmed.starts_with('#') ||
+                                   trimmed.contains(':') ||
+                                   (trimmed.len() < 100 && !trimmed.ends_with('.') && !trimmed.ends_with('!')) {
+                                    cleaned_lines.push(line);
+                                } else if trimmed.len() > 50 && (trimmed.ends_with('.') || trimmed.ends_with('!')) {
+                                    // Likely explanatory text, stop here
+                                    break;
+                                } else {
+                                    cleaned_lines.push(line);
+                                }
+                            }
+                        }
+                        
+                        if !cleaned_lines.is_empty() {
+                            let cleaned_yaml = cleaned_lines.join("\n");
+                            log::info!("Returning cleaned YAML (may not be perfect but should work)");
+                            return Ok(cleaned_yaml);
+                        }
+                        
+                        // If cleaning didn't help, return raw output
+                        log::info!("Returning raw output as YAML (contains name: and steps:)");
                         Ok(output)
                     } else {
-                        Err(format!("Copilot CLI did not generate valid YAML. Output: {}", output))
+                        // Last resort: if output is not empty and has some YAML-like structure, return it
+                        // This allows user to manually fix it in the editor
+                        if !output.trim().is_empty() && output.contains(':') {
+                            log::warn!("Output doesn't have standard YAML structure but contains some YAML-like content, returning it anyway");
+                            Ok(output.trim().to_string())
+                        } else {
+                            Err(format!("Copilot CLI did not generate valid YAML. Output: {}", 
+                                if output.len() > 500 { 
+                                    format!("{}...", &output[..500]) 
+                                } else { 
+                                    output.clone() 
+                                }))
+                        }
                     }
                 }
             }
@@ -862,48 +917,155 @@ async fn execute_copilot_cli(project_path: &str, prompt: &str) -> Result<String,
 }
 
 /// Extract YAML content from Copilot CLI output
+/// This function tries multiple strategies to extract YAML even when there's explanatory text
 fn extract_yaml_from_output(output: &str) -> Option<String> {
-    // Try to find YAML content between ```yaml and ``` markers
+    // Strategy 1: Try to find YAML content between ```yaml and ``` markers
     if let Some(start) = output.find("```yaml") {
         let yaml_start = start + 7; // Length of "```yaml"
         if let Some(end) = output[yaml_start..].find("```") {
             let yaml = output[yaml_start..yaml_start + end].trim();
-            return Some(yaml.to_string());
-        }
-    }
-    
-    // Try to find YAML content between ``` and ``` markers
-    if let Some(start) = output.find("```\n") {
-        let yaml_start = start + 4; // Length of "```\n"
-        if let Some(end) = output[yaml_start..].find("```") {
-            let yaml = output[yaml_start..yaml_start + end].trim();
-            if yaml.contains("name:") && yaml.contains("steps:") {
+            if !yaml.is_empty() {
                 return Some(yaml.to_string());
             }
         }
     }
     
-    // If output itself looks like YAML (starts with name: or has YAML structure)
-    let trimmed = output.trim();
-    if trimmed.starts_with("name:") || (trimmed.contains("name:") && trimmed.contains("steps:")) {
-        // Find the actual YAML part (might have some text before/after)
-        let lines: Vec<&str> = trimmed.lines().collect();
-        let mut yaml_lines = Vec::new();
-        let mut in_yaml = false;
+    // Strategy 2: Try to find YAML content between ``` and ``` markers (generic code block)
+    if let Some(start) = output.find("```") {
+        let after_start = start + 3;
+        // Skip language identifier if present (e.g., ```yaml, ```yml)
+        let yaml_start = if output[after_start..].starts_with("yaml") || output[after_start..].starts_with("yml") {
+            after_start + 4
+        } else {
+            after_start
+        };
         
-        for line in lines {
-            if line.starts_with("name:") || (in_yaml && (line.starts_with(' ') || line.starts_with('-') || line.contains(':'))) {
+        if let Some(end) = output[yaml_start..].find("```") {
+            let yaml = output[yaml_start..yaml_start + end].trim();
+            // Check if it looks like YAML (has name: or steps:)
+            if yaml.contains("name:") || (yaml.contains("steps:") && yaml.contains(':')) {
+                return Some(yaml.to_string());
+            }
+        }
+    }
+    
+    // Strategy 3: Find YAML starting from "name:" line (even with text before it)
+    let lines: Vec<&str> = output.lines().collect();
+    let mut yaml_lines = Vec::new();
+    let mut in_yaml = false;
+    let mut yaml_start_index = None;
+    
+    // Find where YAML starts (look for "name:" line)
+    for (i, line) in lines.iter().enumerate() {
+        let trimmed_line = line.trim();
+        if trimmed_line.starts_with("name:") {
+            yaml_start_index = Some(i);
+            break;
+        }
+    }
+    
+    // If we found a "name:" line, extract from there
+    if let Some(start_idx) = yaml_start_index {
+        for (i, line) in lines.iter().enumerate() {
+            if i < start_idx {
+                continue;
+            }
+            
+            let trimmed_line = line.trim();
+            
+            // Start collecting when we hit "name:"
+            if trimmed_line.starts_with("name:") {
                 in_yaml = true;
                 yaml_lines.push(line);
-            } else if in_yaml && line.trim().is_empty() {
-                yaml_lines.push(line);
-            } else if in_yaml && !line.starts_with(' ') && !line.starts_with('-') && !line.contains(':') {
-                break;
+            } else if in_yaml {
+                // Continue collecting YAML lines
+                // YAML lines typically:
+                // - Start with spaces (indentation)
+                // - Start with '-' (list items)
+                // - Contain ':' (key-value pairs)
+                // - Are empty lines (within YAML structure)
+                // - Start with '#' (comments)
+                
+                if trimmed_line.is_empty() {
+                    // Empty line - keep it if we're in YAML context
+                    yaml_lines.push(line);
+                } else if line.starts_with(' ') || line.starts_with('\t') || 
+                         line.starts_with('-') || 
+                         trimmed_line.starts_with('#') ||
+                         trimmed_line.contains(':') {
+                    // Looks like YAML - keep it
+                    yaml_lines.push(line);
+                } else if trimmed_line.len() > 0 && 
+                         !trimmed_line.chars().next().unwrap().is_alphanumeric() &&
+                         !trimmed_line.starts_with("```") {
+                    // Might be continuation of YAML (special chars)
+                    yaml_lines.push(line);
+                } else {
+                    // Check if this looks like explanatory text (sentence-like)
+                    // If it's a complete sentence or paragraph, we've probably left YAML
+                    let looks_like_text = trimmed_line.len() > 50 || 
+                                         trimmed_line.ends_with('.') ||
+                                         trimmed_line.ends_with('!') ||
+                                         (trimmed_line.contains(' ') && trimmed_line.matches(' ').count() > 5);
+                    
+                    if looks_like_text && yaml_lines.len() > 5 {
+                        // We have enough YAML, stop here
+                        break;
+                    } else if !looks_like_text {
+                        // Might still be YAML, keep it
+                        yaml_lines.push(line);
+                    } else {
+                        break;
+                    }
+                }
             }
         }
         
         if !yaml_lines.is_empty() {
-            return Some(yaml_lines.join("\n"));
+            let extracted: String = yaml_lines.iter().map(|s| s.to_string()).collect::<Vec<_>>().join("\n");
+            // Verify it has at least name: and looks like YAML
+            if extracted.contains("name:") && extracted.contains(':') {
+                return Some(extracted);
+            }
+        }
+    }
+    
+    // Strategy 4: If output contains "name:" and "steps:", try to extract the YAML portion
+    // by finding lines that look like YAML structure
+    if output.contains("name:") && output.contains("steps:") {
+        let mut yaml_lines = Vec::new();
+        let mut found_name = false;
+        
+        for line in lines {
+            let trimmed = line.trim();
+            
+            if trimmed.starts_with("name:") {
+                found_name = true;
+                yaml_lines.push(line);
+            } else if found_name {
+                // Continue collecting until we hit clear non-YAML text
+                if trimmed.is_empty() || 
+                   line.starts_with(' ') || 
+                   line.starts_with('\t') || 
+                   line.starts_with('-') ||
+                   trimmed.starts_with('#') ||
+                   trimmed.contains(':') {
+                    yaml_lines.push(line);
+                } else if trimmed.len() < 100 && !trimmed.ends_with('.') {
+                    // Short line that might be YAML
+                    yaml_lines.push(line);
+                } else {
+                    // Probably explanatory text, stop
+                    break;
+                }
+            }
+        }
+        
+        if !yaml_lines.is_empty() {
+            let extracted: String = yaml_lines.iter().map(|s| s.to_string()).collect::<Vec<_>>().join("\n");
+            if extracted.contains("name:") {
+                return Some(extracted);
+            }
         }
     }
     
