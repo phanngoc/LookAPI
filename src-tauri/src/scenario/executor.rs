@@ -112,76 +112,196 @@ impl ScenarioExecutor {
         for (index, step) in enabled_steps.iter().enumerate() {
             let step_index = index as u32;
 
-            log::info!("[Executor] Executing step {}/{}: {} ({})", 
-                step_index + 1, total_steps, step.name, step.step_type.as_str());
+            // Check if step has CSV config for expansion
+            let csv_records = if step.step_type == TestStepType::Request {
+                if let Ok(config) = serde_json::from_value::<RequestStepConfig>(step.config.clone()) {
+                    if let Some(csv_config) = config.with_items_from_csv {
+                        log::info!("[Executor] Step {} has CSV config, expanding with data from {}", 
+                            step.name, csv_config.file_name);
+                        match super::csv_reader::read_csv_to_records(&csv_config.file_name, &csv_config) {
+                            Ok(records) => {
+                                log::info!("[Executor] Loaded {} records from CSV", records.len());
+                                Some(records)
+                            },
+                            Err(e) => {
+                                log::error!("[Executor] Failed to read CSV: {}", e);
+                                error_message = Some(format!("Failed to read CSV: {}", e));
+                                None
+                            }
+                        }
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
 
-            // Emit step started event
-            if let Some(app) = app_handle {
-                let _ = app.emit(
-                    "step-started",
-                    StepStartedEvent {
-                        run_id: run_id.clone(),
-                        step_id: step.id.clone(),
-                        step_index,
-                        step_name: step.name.clone(),
-                        step_type: step.step_type.as_str().to_string(),
-                    },
-                );
-            }
+            // Execute step once or multiple times based on CSV data
+            if let Some(records) = csv_records {
+                // Execute step for each CSV row
+                for (csv_index, record) in records.iter().enumerate() {
+                    log::info!("[Executor] Executing step {}/{} (CSV row {}): {} ({})", 
+                        step_index + 1, total_steps, csv_index, step.name, step.step_type.as_str());
 
-            let step_result = self.execute_step(step);
-            
-            match step_result.status {
-                StepResultStatus::Passed => {
-                    passed_steps += 1;
-                    log::info!("[Executor] Step {} passed (duration: {}ms)", step.name, 
-                        step_result.duration_ms.unwrap_or(0));
-                },
-                StepResultStatus::Failed => {
-                    failed_steps += 1;
-                    log::warn!("[Executor] Step {} failed: {:?}", step.name, step_result.error);
-                    if error_message.is_none() {
-                        error_message = step_result.error.clone();
+                    // Set CSV-specific variables
+                    let mut item_obj = serde_json::Map::new();
+                    for (key, value) in record {
+                        item_obj.insert(key.clone(), serde_json::Value::String(value.clone()));
+                    }
+                    self.variables.insert("item".to_string(), serde_json::Value::Object(item_obj));
+                    self.variables.insert("index".to_string(), serde_json::Value::Number(csv_index.into()));
+
+                    // Emit step started event
+                    if let Some(app) = app_handle {
+                        let _ = app.emit(
+                            "step-started",
+                            StepStartedEvent {
+                                run_id: run_id.clone(),
+                                step_id: format!("{}-{}", step.id, csv_index),
+                                step_index,
+                                step_name: format!("{} (row {})", step.name, csv_index),
+                                step_type: step.step_type.as_str().to_string(),
+                            },
+                        );
+                    }
+
+                    let step_result = self.execute_step(step);
+                    
+                    match step_result.status {
+                        StepResultStatus::Passed => {
+                            passed_steps += 1;
+                            log::info!("[Executor] Step {} (CSV row {}) passed (duration: {}ms)", 
+                                step.name, csv_index, step_result.duration_ms.unwrap_or(0));
+                        },
+                        StepResultStatus::Failed => {
+                            failed_steps += 1;
+                            log::warn!("[Executor] Step {} (CSV row {}) failed: {:?}", 
+                                step.name, csv_index, step_result.error);
+                            if error_message.is_none() {
+                                error_message = step_result.error.clone();
+                            }
+                        }
+                        StepResultStatus::Skipped => {
+                            skipped_steps += 1;
+                            log::info!("[Executor] Step {} (CSV row {}) skipped", step.name, csv_index);
+                        },
+                        StepResultStatus::Error => {
+                            failed_steps += 1;
+                            log::error!("[Executor] Step {} (CSV row {}) error: {:?}", 
+                                step.name, csv_index, step_result.error);
+                            if error_message.is_none() {
+                                error_message = step_result.error.clone();
+                            }
+                        }
+                        _ => {}
+                    }
+
+                    // Store extracted variables (but not item/index)
+                    if let Some(ref extracted) = step_result.extracted_variables {
+                        for (k, v) in extracted {
+                            self.variables.insert(k.clone(), v.clone());
+                        }
+                    }
+
+                    results.push(step_result.clone());
+
+                    // Emit step completed event
+                    if let Some(app) = app_handle {
+                        let completed_count = results.len() as u32;
+                        let progress_percentage = (completed_count as f64 / total_steps as f64) * 100.0;
+                        let _ = app.emit(
+                            "step-completed",
+                            StepCompletedEvent {
+                                run_id: run_id.clone(),
+                                step_id: format!("{}-{}", step.id, csv_index),
+                                step_index,
+                                status: step_result.status.as_str().to_string(),
+                                result: step_result,
+                                progress_percentage,
+                            },
+                        );
                     }
                 }
-                StepResultStatus::Skipped => {
-                    skipped_steps += 1;
-                    log::info!("[Executor] Step {} skipped", step.name);
-                },
-                StepResultStatus::Error => {
-                    failed_steps += 1;
-                    log::error!("[Executor] Step {} error: {:?}", step.name, step_result.error);
-                    if error_message.is_none() {
-                        error_message = step_result.error.clone();
+                
+                // Clean up CSV variables after processing all rows
+                self.variables.remove("item");
+                self.variables.remove("index");
+            } else {
+                // Execute step normally (no CSV)
+                log::info!("[Executor] Executing step {}/{}: {} ({})", 
+                    step_index + 1, total_steps, step.name, step.step_type.as_str());
+
+                // Emit step started event
+                if let Some(app) = app_handle {
+                    let _ = app.emit(
+                        "step-started",
+                        StepStartedEvent {
+                            run_id: run_id.clone(),
+                            step_id: step.id.clone(),
+                            step_index,
+                            step_name: step.name.clone(),
+                            step_type: step.step_type.as_str().to_string(),
+                        },
+                    );
+                }
+
+                let step_result = self.execute_step(step);
+                
+                match step_result.status {
+                    StepResultStatus::Passed => {
+                        passed_steps += 1;
+                        log::info!("[Executor] Step {} passed (duration: {}ms)", step.name, 
+                            step_result.duration_ms.unwrap_or(0));
+                    },
+                    StepResultStatus::Failed => {
+                        failed_steps += 1;
+                        log::warn!("[Executor] Step {} failed: {:?}", step.name, step_result.error);
+                        if error_message.is_none() {
+                            error_message = step_result.error.clone();
+                        }
+                    }
+                    StepResultStatus::Skipped => {
+                        skipped_steps += 1;
+                        log::info!("[Executor] Step {} skipped", step.name);
+                    },
+                    StepResultStatus::Error => {
+                        failed_steps += 1;
+                        log::error!("[Executor] Step {} error: {:?}", step.name, step_result.error);
+                        if error_message.is_none() {
+                            error_message = step_result.error.clone();
+                        }
+                    }
+                    _ => {}
+                }
+
+                // Store extracted variables
+                if let Some(ref extracted) = step_result.extracted_variables {
+                    for (k, v) in extracted {
+                        self.variables.insert(k.clone(), v.clone());
                     }
                 }
-                _ => {}
-            }
 
-            // Store extracted variables
-            if let Some(ref extracted) = step_result.extracted_variables {
-                for (k, v) in extracted {
-                    self.variables.insert(k.clone(), v.clone());
+                results.push(step_result.clone());
+
+                // Emit step completed event
+                if let Some(app) = app_handle {
+                    let completed_count = (index + 1) as u32;
+                    let progress_percentage = (completed_count as f64 / total_steps as f64) * 100.0;
+                    let _ = app.emit(
+                        "step-completed",
+                        StepCompletedEvent {
+                            run_id: run_id.clone(),
+                            step_id: step.id.clone(),
+                            step_index,
+                            status: step_result.status.as_str().to_string(),
+                            result: step_result,
+                            progress_percentage,
+                        },
+                    );
                 }
-            }
-
-            results.push(step_result.clone());
-
-            // Emit step completed event
-            if let Some(app) = app_handle {
-                let completed_count = (index + 1) as u32;
-                let progress_percentage = (completed_count as f64 / total_steps as f64) * 100.0;
-                let _ = app.emit(
-                    "step-completed",
-                    StepCompletedEvent {
-                        run_id: run_id.clone(),
-                        step_id: step.id.clone(),
-                        step_index,
-                        status: step_result.status.as_str().to_string(),
-                        result: step_result,
-                        progress_percentage,
-                    },
-                );
             }
         }
 
@@ -634,24 +754,57 @@ impl ScenarioExecutor {
     }
 
     /// Resolve variables in a string ({{variable_name}} syntax)
-    /// Supports both {{var}} and {{ var }} formats (with optional spaces)
+    /// Supports:
+    /// - {{var}} - simple variable
+    /// - {{ var }} - variable with spaces
+    /// - {{ item.column }} - CSV row column access
+    /// - {{ index }} - CSV row index
     fn resolve_variables(&self, input: &str) -> String {
-        let re = Regex::new(r"\{\{\s*(\w+)\s*\}\}").unwrap();
+        // Support both {{ item.column }} and {{ variable }} patterns
+        let re = Regex::new(r"\{\{\s*([\w.]+)\s*\}\}").unwrap();
         let mut result = input.to_string();
 
         for cap in re.captures_iter(input) {
-            let var_name = &cap[1];
-            if let Some(value) = self.variables.get(var_name) {
+            let var_path = &cap[1];
+            
+            // Check if it's a dotted path (e.g., item.column)
+            if var_path.contains('.') {
+                let parts: Vec<&str> = var_path.split('.').collect();
+                if parts.len() == 2 {
+                    let parent = parts[0];
+                    let child = parts[1];
+                    
+                    // Try to resolve item.column
+                    if let Some(parent_value) = self.variables.get(parent) {
+                        if let Some(obj) = parent_value.as_object() {
+                            if let Some(child_value) = obj.get(child) {
+                                let replacement = match child_value {
+                                    serde_json::Value::String(s) => s.clone(),
+                                    serde_json::Value::Number(n) => n.to_string(),
+                                    serde_json::Value::Bool(b) => b.to_string(),
+                                    _ => child_value.to_string(),
+                                };
+                                log::debug!("[Executor] Resolving nested variable {}: {} -> {}", var_path, cap[0].to_string(), replacement);
+                                result = result.replace(&cap[0], &replacement);
+                                continue;
+                            }
+                        }
+                    }
+                }
+            }
+            
+            // Simple variable lookup
+            if let Some(value) = self.variables.get(var_path) {
                 let replacement = match value {
                     serde_json::Value::String(s) => s.clone(),
                     serde_json::Value::Number(n) => n.to_string(),
                     serde_json::Value::Bool(b) => b.to_string(),
                     _ => value.to_string(),
                 };
-                log::debug!("[Executor] Resolving variable {}: {} -> {}", var_name, cap[0].to_string(), replacement);
+                log::debug!("[Executor] Resolving variable {}: {} -> {}", var_path, cap[0].to_string(), replacement);
                 result = result.replace(&cap[0], &replacement);
             } else {
-                log::warn!("[Executor] Variable {} not found in context", var_name);
+                log::warn!("[Executor] Variable {} not found in context", var_path);
             }
         }
 

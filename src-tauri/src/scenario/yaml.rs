@@ -71,6 +71,9 @@ pub struct StepYaml {
     pub extract: Option<Vec<ExtractorYaml>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub assertions: Option<Vec<AssertionYaml>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "with_items_from_csv")]
+    pub with_items_from_csv: Option<CsvConfigYaml>,
 }
 
 fn default_enabled() -> bool {
@@ -152,6 +155,18 @@ pub struct AssertionYaml {
     pub expected: serde_json::Value,
 }
 
+/// YAML format for CSV configuration
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct CsvConfigYaml {
+    #[serde(rename = "file_name")]
+    pub file_name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "quote_char")]
+    pub quote_char: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub delimiter: Option<String>,
+}
+
 // ============================================================================
 // Conversion Functions: Internal Types -> YAML
 // ============================================================================
@@ -192,6 +207,7 @@ fn step_to_yaml(step: &TestScenarioStep) -> StepYaml {
         loop_config: None,
         extract: None,
         assertions: None,
+        with_items_from_csv: None,
     };
 
     match step.step_type {
@@ -238,6 +254,15 @@ fn step_to_yaml(step: &TestScenarioStep) -> StepYaml {
                                 .collect(),
                         );
                     }
+                }
+
+                // CSV config
+                if let Some(csv_config) = config.with_items_from_csv {
+                    step_yaml.with_items_from_csv = Some(CsvConfigYaml {
+                        file_name: csv_config.file_name,
+                        quote_char: csv_config.quote_char.map(|c| c.to_string()),
+                        delimiter: csv_config.delimiter.map(|c| c.to_string()),
+                    });
                 }
             }
         }
@@ -441,6 +466,13 @@ fn determine_step_type_and_config(yaml: &StepYaml) -> (TestStepType, serde_json:
                     })
                     .collect()
             }),
+            with_items_from_csv: yaml.with_items_from_csv.as_ref().map(|csv_yaml| {
+                CsvConfig {
+                    file_name: csv_yaml.file_name.clone(),
+                    quote_char: csv_yaml.quote_char.as_ref().and_then(|s| s.chars().next()),
+                    delimiter: csv_yaml.delimiter.as_ref().and_then(|s| s.chars().next()),
+                }
+            }),
         };
         return (TestStepType::Request, serde_json::to_value(config).unwrap());
     }
@@ -489,6 +521,7 @@ fn determine_step_type_and_config(yaml: &StepYaml) -> (TestStepType, serde_json:
         body: None,
         extract_variables: None,
         assertions: None,
+        with_items_from_csv: None,
     };
     (TestStepType::Request, serde_json::to_value(config).unwrap())
 }

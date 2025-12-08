@@ -25,6 +25,12 @@ export interface TestScenarioStep {
   enabled: boolean;
 }
 
+export interface CsvConfig {
+  fileName: string;
+  quoteChar?: string;
+  delimiter?: string;
+}
+
 export interface RequestStepConfig {
   endpointId?: string;
   url: string;
@@ -34,6 +40,7 @@ export interface RequestStepConfig {
   body?: any;
   extractVariables?: VariableExtractor[];
   assertions?: Assertion[];
+  withItemsFromCsv?: CsvConfig;
 }
 
 export interface ConditionStepConfig {

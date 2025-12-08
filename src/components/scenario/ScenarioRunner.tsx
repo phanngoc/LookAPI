@@ -212,17 +212,47 @@ export function ScenarioRunner({ scenario, onEditClick }: Props) {
             </Card>
           ) : (
             enabledSteps.map((step, index) => {
-              // Get result from real-time progress or final run
+              // Check if step has CSV config
+              const hasCsvConfig = step.stepType === 'request' && 
+                (step.config as any)?.withItemsFromCsv;
+
+              // Get all results for this step (including CSV iterations)
+              const allResults = displayRun?.results.filter((r) => {
+                if (hasCsvConfig) {
+                  // Match base step ID or CSV iteration IDs (step-id-0, step-id-1, etc.)
+                  return r.stepId === step.id || r.stepId.startsWith(`${step.id}-`);
+                }
+                return r.stepId === step.id;
+              }) || [];
+
+              // Get primary result (first one or the one matching step.id exactly)
               const result = isCurrentlyRunning
                 ? progress.stepResults.get(step.id)
-                : displayRun?.results.find((r) => r.stepId === step.id);
+                : allResults.find((r) => r.stepId === step.id) || allResults[0];
 
               const isCurrentStep = isCurrentlyRunning && index === progress.currentStepIndex;
-              const stepStatus: StepResultStatus = result
+              
+              // Determine overall status for CSV iterations
+              let stepStatus: StepResultStatus = result
                 ? result.status
                 : isCurrentStep
                 ? 'running'
                 : 'pending';
+              
+              // For CSV iterations, check overall status
+              if (hasCsvConfig && allResults.length > 0) {
+                const passed = allResults.filter((r) => r.status === 'passed').length;
+                const failed = allResults.filter((r) => r.status === 'failed' || r.status === 'error').length;
+                const running = allResults.filter((r) => r.status === 'running').length;
+                
+                if (running > 0) {
+                  stepStatus = 'running';
+                } else if (failed > 0) {
+                  stepStatus = 'failed';
+                } else if (passed === allResults.length) {
+                  stepStatus = 'passed';
+                }
+              }
 
               return (
                 <Collapsible
@@ -267,13 +297,25 @@ export function ScenarioRunner({ scenario, onEditClick }: Props) {
                           <div className="flex-1 text-left">
                             <div className="text-sm font-medium text-slate-900">
                               {step.name}
+                              {hasCsvConfig && allResults.length > 0 && (
+                                <Badge variant="outline" className="ml-2 text-xs">
+                                  {allResults.length} iterations
+                                </Badge>
+                              )}
                             </div>
-                            {result?.durationMs && (
+                            {result?.durationMs && !hasCsvConfig && (
                               <div className="text-xs text-slate-500">
                                 {result.durationMs}ms
                               </div>
                             )}
-                            {stepStatus === 'running' && (
+                            {hasCsvConfig && allResults.length > 0 && (
+                              <div className="text-xs text-slate-500">
+                                {allResults.filter((r) => r.status === 'passed').length} passed,{' '}
+                                {allResults.filter((r) => r.status === 'failed' || r.status === 'error').length} failed
+                                {allResults.some((r) => r.status === 'running') && ', running...'}
+                              </div>
+                            )}
+                            {stepStatus === 'running' && !hasCsvConfig && (
                               <div className="text-xs text-blue-600 animate-pulse">
                                 Running...
                               </div>
@@ -288,19 +330,84 @@ export function ScenarioRunner({ scenario, onEditClick }: Props) {
                       </CardHeader>
                     </CollapsibleTrigger>
 
-                    {result && (
+                    {(result || (hasCsvConfig && allResults.length > 0)) && (
                       <CollapsibleContent>
                         <CardContent className="pt-0 space-y-3">
+                          {/* CSV Iterations Summary */}
+                          {hasCsvConfig && allResults.length > 0 && (
+                            <div className="space-y-2">
+                              <div className="flex items-center justify-between">
+                                <p className="text-xs font-medium text-slate-600">
+                                  CSV Iterations ({allResults.length} total)
+                                </p>
+                                <Badge variant="outline" className="text-xs">
+                                  {allResults.filter((r) => r.status === 'passed').length} passed /{' '}
+                                  {allResults.filter((r) => r.status === 'failed' || r.status === 'error').length} failed
+                                </Badge>
+                              </div>
+                              <div className="space-y-1 max-h-64 overflow-y-auto">
+                                {allResults.map((iterResult, iterIdx) => {
+                                  const iterIndex = iterResult.stepId.includes('-')
+                                    ? parseInt(iterResult.stepId.split('-').pop() || '0')
+                                    : 0;
+                                  return (
+                                    <div
+                                      key={iterResult.stepId}
+                                      className={cn(
+                                        'p-2 rounded border text-xs',
+                                        iterResult.status === 'passed' && 'bg-emerald-50 border-emerald-200',
+                                        iterResult.status === 'failed' && 'bg-red-50 border-red-200',
+                                        iterResult.status === 'error' && 'bg-red-50 border-red-200',
+                                        iterResult.status === 'running' && 'bg-blue-50 border-blue-200',
+                                        iterResult.status === 'pending' && 'bg-slate-50 border-slate-200'
+                                      )}
+                                    >
+                                      <div className="flex items-center justify-between">
+                                        <div className="flex items-center gap-2">
+                                          {getStatusIcon(iterResult.status)}
+                                          <span className="font-medium">
+                                            Row {iterIndex}
+                                          </span>
+                                          {iterResult.durationMs && (
+                                            <span className="text-slate-500">
+                                              ({iterResult.durationMs}ms)
+                                            </span>
+                                          )}
+                                        </div>
+                                        {iterResult.response && (
+                                          <Badge
+                                            variant="outline"
+                                            className={cn(
+                                              'text-xs',
+                                              iterResult.response.status >= 200 && iterResult.response.status < 300
+                                                ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                                                : 'bg-red-50 text-red-700 border-red-200'
+                                            )}
+                                          >
+                                            {iterResult.response.status}
+                                          </Badge>
+                                        )}
+                                      </div>
+                                      {iterResult.error && (
+                                        <p className="text-red-600 mt-1 text-[10px]">{iterResult.error}</p>
+                                      )}
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          )}
+
                           {/* Error */}
-                          {result.error && (
+                          {result?.error && (
                             <div className="p-3 bg-red-50 border border-red-200 rounded-lg">
                               <p className="text-sm text-red-700 font-medium">Error</p>
                               <p className="text-xs text-red-600 mt-1">{result.error}</p>
                             </div>
                           )}
 
-                          {/* Request */}
-                          {result.request && (
+                          {/* Request (show only if not CSV or show first iteration) */}
+                          {result?.request && (!hasCsvConfig || allResults.length === 0) && (
                             <div className="space-y-2">
                               <div className="flex items-center gap-2">
                                 <Badge
@@ -332,8 +439,8 @@ export function ScenarioRunner({ scenario, onEditClick }: Props) {
                             </div>
                           )}
 
-                          {/* Response */}
-                          {result.response && (
+                          {/* Response (show only if not CSV or show first iteration) */}
+                          {result?.response && (!hasCsvConfig || allResults.length === 0) && (
                             <div className="space-y-2">
                               <div className="flex items-center gap-2">
                                 <Badge

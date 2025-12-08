@@ -25,6 +25,7 @@ import {
   EXTRACTOR_SOURCES,
 } from '@/types/scenario';
 import { useEndpoints } from '@/hooks/useEndpoints';
+import { CsvUploader, CsvConfig } from './CsvUploader';
 
 interface Props {
   step: TestScenarioStep;
@@ -439,6 +440,57 @@ export function StepEditor({ step, onClose, onSave, projectId }: Props) {
               <p className="text-xs text-slate-400 text-center py-2">No assertions defined</p>
             )}
           </div>
+        </div>
+
+        <Separator />
+
+        {/* CSV Data Source */}
+        <div>
+          <div className="flex items-center justify-between mb-2">
+            <label className="text-xs font-medium text-slate-600">CSV Data Source</label>
+            {requestConfig.withItemsFromCsv && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="text-red-500"
+                onClick={() => updateConfig({ withItemsFromCsv: undefined })}
+              >
+                Remove CSV
+              </Button>
+            )}
+          </div>
+          {requestConfig.withItemsFromCsv ? (
+            <CsvUploader
+              currentConfig={requestConfig.withItemsFromCsv}
+              onCsvSelected={(csvConfig: CsvConfig) => {
+                updateConfig({
+                  withItemsFromCsv: csvConfig,
+                });
+              }}
+            />
+          ) : (
+            <div className="text-center py-4">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() =>
+                  updateConfig({
+                    withItemsFromCsv: {
+                      fileName: '',
+                      quoteChar: '"',
+                      delimiter: ',',
+                    },
+                  })
+                }
+              >
+                <Plus className="w-3 h-3 mr-1" />
+                Add CSV Data Source
+              </Button>
+              <p className="text-[10px] text-slate-400 mt-2">
+                Use CSV data to run this request multiple times with different data
+              </p>
+            </div>
+          )}
         </div>
       </div>
     );

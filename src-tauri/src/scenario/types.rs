@@ -87,6 +87,8 @@ pub struct RequestStepConfig {
     #[serde(rename = "extractVariables")]
     pub extract_variables: Option<Vec<VariableExtractor>>,
     pub assertions: Option<Vec<Assertion>>,
+    #[serde(rename = "withItemsFromCsv")]
+    pub with_items_from_csv: Option<CsvConfig>,
 }
 
 /// Condition Step Configuration
@@ -398,4 +400,24 @@ pub struct ReorderStepsRequest {
     pub scenario_id: String,
     #[serde(rename = "stepIds")]
     pub step_ids: Vec<String>, // Ordered list of step IDs
+}
+
+/// CSV Configuration for iterating over CSV data
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct CsvConfig {
+    #[serde(rename = "fileName")]
+    pub file_name: String,
+    #[serde(rename = "quoteChar")]
+    pub quote_char: Option<char>,
+    #[serde(rename = "delimiter")]
+    pub delimiter: Option<char>,
+}
+
+/// CSV Preview for frontend display
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct CsvPreview {
+    pub headers: Vec<String>,
+    pub rows: Vec<Vec<String>>,
+    #[serde(rename = "totalRows")]
+    pub total_rows: usize,
 }

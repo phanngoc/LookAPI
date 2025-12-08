@@ -783,3 +783,22 @@ pub async fn update_scenario_from_yaml(
     
     Ok(updated_scenario)
 }
+
+/// Preview CSV file for UI display
+#[tauri::command]
+pub async fn preview_csv_file(
+    file_path: String,
+    quote_char: Option<String>,
+    delimiter: Option<String>,
+) -> Result<scenario::types::CsvPreview, String> {
+    log::info!("[Command] preview_csv_file called: {}", file_path);
+    
+    let csv_config = scenario::types::CsvConfig {
+        file_name: file_path.clone(),
+        quote_char: quote_char.and_then(|s| s.chars().next()),
+        delimiter: delimiter.and_then(|s| s.chars().next()),
+    };
+    
+    scenario::csv_reader::preview_csv_file(&file_path, &csv_config, 10)
+        .map_err(|e| format!("Failed to preview CSV: {}", e))
+}

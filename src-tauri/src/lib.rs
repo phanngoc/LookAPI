@@ -78,6 +78,8 @@ pub fn run() {
             commands::save_yaml_file,
             commands::delete_yaml_file,
             commands::update_scenario_from_yaml,
+            // CSV commands
+            commands::preview_csv_file,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
