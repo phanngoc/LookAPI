@@ -8,7 +8,8 @@ use std::collections::HashMap;
 use std::path::Path;
 use tokio::process::Command;
 use super::types::*;
-use crate::types::ApiEndpoint;
+use crate::types::{ApiEndpoint, ApiResponseDefinition};
+use crate::scanner::types::{ResponseSchema, ResponseProperty};
 
 /// YAML format for a single test scenario
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -805,6 +806,115 @@ pub async fn generate_yaml_template_with_ai(
     }
 }
 
+/// Format a single response property to text (recursive for nested properties)
+fn format_property(prop: &ResponseProperty, indent: usize) -> String {
+    let indent_str = "  ".repeat(indent);
+    let required_str = if prop.required { "required" } else { "optional" };
+    let mut result = format!(
+        "{}  - {}: {} ({})",
+        indent_str,
+        prop.name,
+        prop.property_type,
+        required_str
+    );
+    
+    if let Some(ref desc) = prop.description {
+        if !desc.is_empty() {
+            result.push_str(&format!(" - {}", desc));
+        }
+    }
+    
+    if let Some(ref format) = prop.format {
+        result.push_str(&format!(" [format: {}]", format));
+    }
+    
+    result.push('\n');
+    
+    // Add nested properties if any
+    if let Some(ref nested) = prop.nested_properties {
+        for nested_prop in nested {
+            result.push_str(&format_property(nested_prop, indent + 1));
+        }
+    }
+    
+    result
+}
+
+/// Format response schema from serde_json::Value to readable text
+fn format_response_schema(response: &ApiResponseDefinition) -> String {
+    let mut result = String::new();
+    
+    // Add status code and description
+    result.push_str(&format!(
+        "  Response Schema ({}): {}\n",
+        response.status_code,
+        response.description
+    ));
+    
+    // Try to deserialize schema from JSON
+    if let Some(ref schema_value) = response.schema {
+        match serde_json::from_value::<ResponseSchema>(schema_value.clone()) {
+            Ok(schema) => {
+                // Add schema type info
+                if schema.is_wrapped {
+                    result.push_str("    Note: Response is wrapped in {success, data} structure\n");
+                }
+                
+                if let Some(ref ref_name) = schema.ref_name {
+                    result.push_str(&format!("    Reference: {}\n", ref_name));
+                }
+                
+                // Format properties
+                if !schema.properties.is_empty() {
+                    result.push_str("    Properties:\n");
+                    for prop in &schema.properties {
+                        result.push_str(&format_property(prop, 0));
+                    }
+                } else if schema.schema_type == "array" {
+                    result.push_str(&format!("    Type: array\n"));
+                    if let Some(ref items_schema) = schema.items_schema {
+                        if !items_schema.properties.is_empty() {
+                            result.push_str("    Array items:\n");
+                            for prop in &items_schema.properties {
+                                result.push_str(&format_property(prop, 0));
+                            }
+                        }
+                    }
+                } else {
+                    result.push_str(&format!("    Type: {}\n", schema.schema_type));
+                }
+            }
+            Err(_) => {
+                // If deserialization fails, try to format as JSON (fallback)
+                if let Some(schema_str) = schema_value.as_object() {
+                    result.push_str("    Schema structure:\n");
+                    // Add a simplified representation
+                    if let Some(prop_type) = schema_str.get("schemaType") {
+                        result.push_str(&format!("      Type: {}\n", prop_type));
+                    }
+                }
+            }
+        }
+    }
+    
+    // Add example if available
+    if let Some(ref example) = response.example {
+        result.push_str("    Example:\n");
+        if let Ok(example_str) = serde_json::to_string_pretty(example) {
+            // Limit example length to avoid too long context
+            let example_lines: Vec<&str> = example_str.lines().collect();
+            let total_lines = example_lines.len();
+            let lines_to_show: Vec<&str> = example_lines.iter().take(10).copied().collect();
+            result.push_str(&format!("      {}\n", lines_to_show.join("\n      ")));
+            if total_lines > 10 {
+                result.push_str("      ... (truncated)\n");
+            }
+        }
+    }
+    
+    result
+}
+
 /// Build context string from API endpoints
 fn build_endpoints_context(endpoints: Option<&[ApiEndpoint]>) -> String {
     match endpoints {
@@ -829,6 +939,38 @@ fn build_endpoints_context(endpoints: Option<&[ApiEndpoint]>) -> String {
                             param.param_type,
                             required
                         ));
+                    }
+                }
+                
+                // Add response schemas if any
+                if let Some(ref responses) = ep.responses {
+                    if !responses.is_empty() {
+                        // Sort responses: success responses (200-299) first, then others
+                        let mut sorted_responses = responses.clone();
+                        sorted_responses.sort_by(|a, b| {
+                            let a_is_success = a.status_code >= 200 && a.status_code < 300;
+                            let b_is_success = b.status_code >= 200 && b.status_code < 300;
+                            match (a_is_success, b_is_success) {
+                                (true, false) => std::cmp::Ordering::Less,
+                                (false, true) => std::cmp::Ordering::Greater,
+                                _ => a.status_code.cmp(&b.status_code),
+                            }
+                        });
+                        
+                        // Limit to 3 responses to avoid too long context (prioritize success)
+                        let responses_to_show = sorted_responses.iter().take(3);
+                        
+                        context.push_str("  Response Schemas:\n");
+                        for response in responses_to_show {
+                            context.push_str(&format_response_schema(response));
+                        }
+                        
+                        if sorted_responses.len() > 3 {
+                            context.push_str(&format!(
+                                "    ... and {} more response definitions\n",
+                                sorted_responses.len() - 3
+                            ));
+                        }
                     }
                 }
             }

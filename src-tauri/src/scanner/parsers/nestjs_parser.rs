@@ -959,6 +959,132 @@ impl NestJSParser {
         })
     }
 
+    /// Resolve type name and parse nested schema (with depth limit to avoid infinite loops)
+    fn resolve_and_parse_nested_schema(
+        &self,
+        type_name: &str,
+        max_depth: usize,
+        visited: &mut Vec<String>,
+    ) -> Option<ResponseSchema> {
+        // Check depth limit
+        if max_depth == 0 {
+            return None;
+        }
+
+        // Check circular reference
+        if visited.contains(&type_name.to_string()) {
+            return None;
+        }
+
+        visited.push(type_name.to_string());
+
+        let result = {
+            // Try to find in response DTO cache first
+            if let Some(file_path) = self.response_dto_files_cache.get(type_name) {
+                if let Ok(content) = fs::read_to_string(file_path) {
+                    if let Some(mut schema) = self.parse_response_dto_content(&content, type_name) {
+                        // Recursively parse nested properties
+                        schema.properties = self.parse_nested_properties(
+                            &schema.properties,
+                            max_depth - 1,
+                            visited,
+                        );
+                        visited.pop();
+                        return Some(schema);
+                    }
+                }
+            }
+
+            // Try to find in entity cache
+            if let Some(file_path) = self.entity_files_cache.get(type_name) {
+                if let Ok(content) = fs::read_to_string(file_path) {
+                    if let Some(mut schema) = self.parse_entity_content(&content, type_name) {
+                        // Recursively parse nested properties
+                        schema.properties = self.parse_nested_properties(
+                            &schema.properties,
+                            max_depth - 1,
+                            visited,
+                        );
+                        visited.pop();
+                        return Some(schema);
+                    }
+                }
+            }
+
+            // Try in DTO cache (for request DTOs that might be used in responses)
+            if let Some(file_path) = self.dto_files_cache.get(type_name) {
+                if let Ok(content) = fs::read_to_string(file_path) {
+                    if let Some(mut schema) = self.parse_response_dto_content(&content, type_name) {
+                        schema.properties = self.parse_nested_properties(
+                            &schema.properties,
+                            max_depth - 1,
+                            visited,
+                        );
+                        visited.pop();
+                        return Some(schema);
+                    }
+                }
+            }
+
+            // Try without "Dto" suffix
+            let type_without_dto = type_name.trim_end_matches("Dto").trim_end_matches("Response");
+            if type_without_dto != type_name {
+                if let Some(file_path) = self.entity_files_cache.get(type_without_dto) {
+                    if let Ok(content) = fs::read_to_string(file_path) {
+                        if let Some(mut schema) = self.parse_entity_content(&content, type_without_dto) {
+                            schema.properties = self.parse_nested_properties(
+                                &schema.properties,
+                                max_depth - 1,
+                                visited,
+                            );
+                            visited.pop();
+                            return Some(schema);
+                        }
+                    }
+                }
+            }
+
+            None
+        };
+
+        visited.pop();
+        result
+    }
+
+    /// Recursively parse nested properties with depth limit
+    /// This method is used to parse already extracted properties that might have unresolved nested types
+    /// Note: This method assumes properties have already been parsed by parse_response_property_line,
+    /// which should have resolved type_name and set nested_properties. This method just recursively
+    /// processes any nested_properties that were already set.
+    fn parse_nested_properties(
+        &self,
+        properties: &[ResponseProperty],
+        max_depth: usize,
+        visited: &mut Vec<String>,
+    ) -> Vec<ResponseProperty> {
+        if max_depth == 0 {
+            return properties.to_vec();
+        }
+
+        properties
+            .iter()
+            .map(|prop| {
+                let mut new_prop = prop.clone();
+
+                // If property has nested_properties, recursively parse them
+                if let Some(ref nested) = prop.nested_properties {
+                    new_prop.nested_properties = Some(self.parse_nested_properties(
+                        nested,
+                        max_depth - 1,
+                        visited,
+                    ));
+                }
+
+                new_prop
+            })
+            .collect()
+    }
+
     /// Wrap response with {success: true, data: ...} structure
     fn wrap_with_success_wrapper(&self, inner_schema: Option<ResponseSchema>) -> Option<ResponseSchema> {
         let data_property = ResponseProperty {
@@ -1124,9 +1250,13 @@ impl NestJSParser {
     fn parse_response_dto_content(&self, content: &str, type_name: &str) -> Option<ResponseSchema> {
         let properties = self.extract_properties_from_content(content);
         
+        // Parse nested properties with depth limit
+        let mut visited = vec![type_name.to_string()];
+        let parsed_properties = self.parse_nested_properties(&properties, 3, &mut visited);
+        
         Some(ResponseSchema {
             schema_type: "object".to_string(),
-            properties,
+            properties: parsed_properties,
             is_wrapped: false,
             items_schema: None,
             ref_name: Some(type_name.to_string()),
@@ -1137,9 +1267,13 @@ impl NestJSParser {
     fn parse_entity_content(&self, content: &str, type_name: &str) -> Option<ResponseSchema> {
         let properties = self.extract_properties_from_content(content);
         
+        // Parse nested properties with depth limit
+        let mut visited = vec![type_name.to_string()];
+        let parsed_properties = self.parse_nested_properties(&properties, 3, &mut visited);
+        
         Some(ResponseSchema {
             schema_type: "object".to_string(),
-            properties,
+            properties: parsed_properties,
             is_wrapped: false,
             items_schema: None,
             ref_name: Some(type_name.to_string()),
@@ -1197,7 +1331,7 @@ impl NestJSParser {
         let is_optional = line.contains('?');
         
         // Determine property type
-        let (property_type, items_type, format) = self.parse_type_string(raw_type);
+        let (property_type, items_type, format, type_name) = self.parse_type_string(raw_type);
         
         // Extract example from decorators
         let mut example_value: Option<Value> = None;
@@ -1225,54 +1359,103 @@ impl NestJSParser {
             }
         }
         
+        // Resolve nested properties if type_name is available
+        let mut nested_properties = None;
+        let mut resolved_items_type = items_type;
+        
+        if let Some(ref type_name_str) = type_name {
+            // Resolve nested schema with max depth of 3 to avoid infinite loops
+            let mut visited = Vec::new();
+            if let Some(nested_schema) = self.resolve_and_parse_nested_schema(type_name_str, 3, &mut visited) {
+                if property_type == "array" {
+                    // For arrays, set items_type to the resolved type
+                    resolved_items_type = Some(nested_schema.schema_type.clone());
+                    // Also set nested_properties for array items
+                    if !nested_schema.properties.is_empty() {
+                        nested_properties = Some(nested_schema.properties);
+                    }
+                } else {
+                    // For objects, set nested_properties directly
+                    if !nested_schema.properties.is_empty() {
+                        nested_properties = Some(nested_schema.properties);
+                    }
+                }
+            }
+        }
+        
         Some(ResponseProperty {
             name: property_name.to_string(),
             property_type,
             required: !is_optional,
             description,
-            nested_properties: None,
-            items_type,
+            nested_properties,
+            items_type: resolved_items_type,
             example: example_value,
             format,
         })
     }
 
     /// Parse TypeScript type string to determine JSON schema type
-    fn parse_type_string(&self, raw_type: &str) -> (String, Option<String>, Option<String>) {
+    /// Returns: (json_type, items_type, format, type_name)
+    /// - json_type: The JSON schema type (string, number, boolean, object, array)
+    /// - items_type: For arrays, the type of items
+    /// - format: Optional format (date-time, uuid, etc.)
+    /// - type_name: For object references, the type name to resolve (e.g., "CartDto", "CartItem")
+    fn parse_type_string(&self, raw_type: &str) -> (String, Option<String>, Option<String>, Option<String>) {
         let type_str = raw_type.trim();
         
-        // Check for array types
+        // Remove optional marker and null union
+        let type_str = type_str.trim_end_matches('?').trim();
+        let type_str = if type_str.ends_with(" | null") || type_str.ends_with("|null") {
+            &type_str[..type_str.len().saturating_sub(7)]
+        } else {
+            type_str
+        };
+        
+        // Check for array types: Type[]
         if type_str.ends_with("[]") {
             let inner_type = type_str.trim_end_matches("[]").trim();
-            let (inner_json_type, _, format) = self.parse_type_string(inner_type);
-            return ("array".to_string(), Some(inner_json_type), format);
+            let (inner_json_type, _, format, type_name) = self.parse_type_string(inner_type);
+            return ("array".to_string(), Some(inner_json_type), format, type_name);
         }
         
         // Check for Array<Type>
         if type_str.starts_with("Array<") && type_str.ends_with('>') {
-            let inner_type = &type_str[6..type_str.len()-1];
-            let (inner_json_type, _, format) = self.parse_type_string(inner_type);
-            return ("array".to_string(), Some(inner_json_type), format);
+            let inner_type = &type_str[6..type_str.len()-1].trim();
+            let (inner_json_type, _, format, type_name) = self.parse_type_string(inner_type);
+            return ("array".to_string(), Some(inner_json_type), format, type_name);
+        }
+        
+        // Check for Promise<Type> - extract inner type
+        if type_str.starts_with("Promise<") && type_str.ends_with('>') {
+            let inner_type = &type_str[8..type_str.len()-1].trim();
+            return self.parse_type_string(inner_type);
         }
         
         // Map TypeScript types to JSON schema types
-        let (json_type, format) = match type_str {
-            "string" | "String" => ("string".to_string(), None),
-            "number" | "Number" | "int" | "float" | "decimal" => ("number".to_string(), None),
-            "boolean" | "Boolean" => ("boolean".to_string(), None),
-            "Date" => ("string".to_string(), Some("date-time".to_string())),
-            "uuid" | "UUID" => ("string".to_string(), Some("uuid".to_string())),
+        let (json_type, format, type_name) = match type_str {
+            "string" | "String" => ("string".to_string(), None, None),
+            "number" | "Number" | "int" | "float" | "decimal" => ("number".to_string(), None, None),
+            "boolean" | "Boolean" => ("boolean".to_string(), None, None),
+            "Date" => ("string".to_string(), Some("date-time".to_string()), None),
+            "uuid" | "UUID" => ("string".to_string(), Some("uuid".to_string()), None),
             _ => {
                 // Check for enum types or complex objects
-                if type_str.contains('{') || type_str.contains('|') {
-                    ("object".to_string(), None)
+                if type_str.contains('{') || (type_str.contains('|') && !type_str.contains("null")) {
+                    ("object".to_string(), None, None)
                 } else {
-                    // Treat as object reference
-                    ("object".to_string(), None)
+                    // Treat as object reference - extract type name
+                    // Remove generic parameters if any (e.g., "CartDto<T>" -> "CartDto")
+                    let type_name = if let Some(lt_pos) = type_str.find('<') {
+                        &type_str[..lt_pos]
+                    } else {
+                        type_str
+                    };
+                    ("object".to_string(), None, Some(type_name.trim().to_string()))
                 }
             }
         };
         
-        (json_type, None, format)
+        (json_type, None, format, type_name)
     }
 }
