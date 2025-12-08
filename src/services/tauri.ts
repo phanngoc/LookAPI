@@ -222,14 +222,14 @@ export const tauriService = {
    * @param userPrompt - User's prompt describing what kind of test scenario to generate
    * @param projectId - Optional project ID to include endpoints context
    * @param baseUrl - Optional base URL for the API
-   * @returns Generated YAML template string
+   * @returns Generated YAML template string and optionally created scenario
    */
   async generateYamlWithAI(
     projectPath: string,
     userPrompt: string,
     projectId?: string,
     baseUrl?: string
-  ): Promise<string> {
+  ): Promise<{ yaml: string; scenario?: any }> {
     return invoke('generate_yaml_with_ai', { 
       projectPath, 
       userPrompt, 

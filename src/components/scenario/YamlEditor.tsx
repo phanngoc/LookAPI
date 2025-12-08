@@ -144,17 +144,35 @@ export function YamlEditor({
     setAIError(null);
     
     try {
-      const generatedYaml = await tauriService.generateYamlWithAI(
+      const result = await tauriService.generateYamlWithAI(
         currentProject.path,
         aiPrompt,
         currentProject.id,
         currentProject.baseUrl || undefined
       );
       
-      setContent(generatedYaml);
-      onChange?.(generatedYaml);
+      setContent(result.yaml);
+      onChange?.(result.yaml);
       setShowAIDialog(false);
       setAIPrompt('');
+      
+      // If a scenario was auto-created, show success message
+      if (result.scenario) {
+        toast({
+          title: 'Scenario Created',
+          description: `Test scenario "${result.scenario.name}" has been created and saved successfully.`,
+        });
+        
+        console.log('[YamlEditor] Scenario auto-created:', result.scenario.id);
+        
+        // Trigger a custom event to notify other components to refresh
+        window.dispatchEvent(new CustomEvent('scenario-created', { 
+          detail: { 
+            projectId: currentProject.id, 
+            scenarioId: result.scenario.id 
+          } 
+        }));
+      }
     } catch (e) {
       const errorMessage = e instanceof Error ? e.message : String(e);
       setAIError(errorMessage);

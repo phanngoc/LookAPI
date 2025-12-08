@@ -18,6 +18,34 @@ export interface APIEndpoint {
   parameters: APIParameter[];
   category: string;
   explanation?: string;
+  responses?: APIResponseDefinition[];
+}
+
+export interface APIResponseDefinition {
+  statusCode: number;
+  description: string;
+  contentType: string;
+  schema?: ResponseSchema;
+  example?: any;
+}
+
+export interface ResponseSchema {
+  schemaType: string;
+  properties: ResponseProperty[];
+  isWrapped: boolean;
+  itemsSchema?: ResponseSchema;
+  refName?: string;
+}
+
+export interface ResponseProperty {
+  name: string;
+  propertyType: string;
+  required: boolean;
+  description?: string;
+  nestedProperties?: ResponseProperty[];
+  itemsType?: string;
+  example?: any;
+  format?: string;
 }
 
 export interface APIParameter {

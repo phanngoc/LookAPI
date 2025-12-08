@@ -26,6 +26,19 @@ pub struct ApiEndpoint {
     pub parameters: Vec<ApiParameter>,
     pub category: String,
     pub explanation: Option<String>,
+    pub responses: Option<Vec<ApiResponseDefinition>>,
+}
+
+/// Response definition for API documentation (stored in database)
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct ApiResponseDefinition {
+    #[serde(rename = "statusCode")]
+    pub status_code: u16,
+    pub description: String,
+    #[serde(rename = "contentType")]
+    pub content_type: String,
+    pub schema: Option<serde_json::Value>, // JSON schema
+    pub example: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -85,4 +98,10 @@ pub struct YamlFile {
     pub content: String,
     #[serde(rename = "createdAt")]
     pub created_at: i64,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct GenerateYamlWithAIResponse {
+    pub yaml: String,
+    pub scenario: Option<crate::scenario::types::TestScenario>,
 }

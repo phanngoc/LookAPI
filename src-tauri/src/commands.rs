@@ -197,6 +197,18 @@ pub async fn scan_project(project_id: String, project_path: String) -> Result<Ve
             })
             .collect();
 
+        // Convert responses
+        let responses: Vec<ApiResponseDefinition> = scanned_endpoint.responses
+            .into_iter()
+            .map(|r| ApiResponseDefinition {
+                status_code: r.status_code,
+                description: r.description,
+                content_type: r.content_type,
+                schema: r.schema.map(|s| serde_json::to_value(&s).unwrap_or_default()),
+                example: r.example,
+            })
+            .collect();
+
         // Generate category from path
         let category = scanned_endpoint.path
             .split('/')
@@ -216,6 +228,7 @@ pub async fn scan_project(project_id: String, project_path: String) -> Result<Ve
             parameters,
             category,
             explanation: Some(scanned_endpoint.business_logic.summary),
+            responses: Some(responses),
         };
 
         // Save to database
@@ -621,7 +634,7 @@ pub async fn generate_yaml_with_ai(
     user_prompt: String,
     project_id: Option<String>,
     base_url: Option<String>,
-) -> Result<String, String> {
+) -> Result<GenerateYamlWithAIResponse, String> {
     log::info!("[Command] generate_yaml_with_ai called for project: {}", project_path);
     
     // Get endpoints if project_id is provided
@@ -650,6 +663,8 @@ pub async fn generate_yaml_with_ai(
         Ok(yaml) => {
             log::info!("[Command] AI generation successful");
             
+            let mut created_scenario = None;
+            
             // Save generated YAML to database if project_id is provided
             if let Some(ref pid) = project_id {
                 let yaml_file = YamlFile {
@@ -662,13 +677,47 @@ pub async fn generate_yaml_with_ai(
                 
                 if let Err(e) = database::save_yaml_file(yaml_file) {
                     log::warn!("[Command] Failed to save YAML to database: {}", e);
-                    // Don't fail the command, just log the warning
-                }  else {
+                } else {
                     log::info!("[Command] YAML saved to database successfully");
+                }
+                
+                // Auto-import as test scenario
+                log::info!("[Command] Auto-importing generated YAML as test scenario");
+                match parse_scenario_yaml(&yaml) {
+                    Ok(parsed_yaml) => {
+                        let (scenario, steps) = yaml_to_scenario_with_steps(&parsed_yaml, pid);
+                        
+                        // Save scenario
+                        match database::save_test_scenario(scenario.clone()) {
+                            Ok(_) => {
+                                log::info!("[Command] Test scenario saved: {} ({})", scenario.name, scenario.id);
+                                
+                                // Save steps
+                                let mut steps_saved = 0;
+                                for step in steps {
+                                    if let Ok(_) = database::save_test_scenario_step(step) {
+                                        steps_saved += 1;
+                                    }
+                                }
+                                log::info!("[Command] {} steps saved for scenario {}", steps_saved, scenario.id);
+                                
+                                created_scenario = Some(scenario);
+                            }
+                            Err(e) => {
+                                log::warn!("[Command] Failed to save auto-imported scenario: {}", e);
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        log::warn!("[Command] Failed to parse generated YAML for auto-import: {}", e);
+                    }
                 }
             }
             
-            Ok(yaml)
+            Ok(GenerateYamlWithAIResponse {
+                yaml,
+                scenario: created_scenario,
+            })
         }
         Err(e) => {
             log::error!("[Command] AI generation failed: {}", e);

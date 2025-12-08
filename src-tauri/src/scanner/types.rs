@@ -37,6 +37,7 @@ pub struct ScannedEndpoint {
     pub business_logic: BusinessLogic,
     pub authentication: Authentication,
     pub authorization: Authorization,
+    pub responses: Vec<EndpointResponse>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -69,6 +70,48 @@ pub struct Authentication {
 pub struct Authorization {
     pub roles: Vec<String>,
     pub permissions: Vec<String>,
+}
+
+/// Response definition for an endpoint (similar to Swagger response)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EndpointResponse {
+    #[serde(rename = "statusCode")]
+    pub status_code: u16,
+    pub description: String,
+    #[serde(rename = "contentType")]
+    pub content_type: String,
+    pub schema: Option<ResponseSchema>,
+    pub example: Option<Value>,
+}
+
+/// Schema structure for response body
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResponseSchema {
+    #[serde(rename = "schemaType")]
+    pub schema_type: String, // "object", "array", "string", "number", "boolean"
+    pub properties: Vec<ResponseProperty>,
+    #[serde(rename = "isWrapped")]
+    pub is_wrapped: bool, // wrapped with {success, data} structure
+    #[serde(rename = "itemsSchema")]
+    pub items_schema: Option<Box<ResponseSchema>>, // For array types
+    #[serde(rename = "refName")]
+    pub ref_name: Option<String>, // Reference to DTO/Entity name
+}
+
+/// Property definition within a response schema
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResponseProperty {
+    pub name: String,
+    #[serde(rename = "propertyType")]
+    pub property_type: String, // "string", "number", "boolean", "object", "array"
+    pub required: bool,
+    pub description: Option<String>,
+    #[serde(rename = "nestedProperties")]
+    pub nested_properties: Option<Vec<ResponseProperty>>, // For nested objects
+    #[serde(rename = "itemsType")]
+    pub items_type: Option<String>, // For array items type
+    pub example: Option<Value>,
+    pub format: Option<String>, // "email", "uuid", "date-time", etc.
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -124,6 +167,45 @@ impl Default for Authorization {
         Self {
             roles: vec![],
             permissions: vec![],
+        }
+    }
+}
+
+impl Default for EndpointResponse {
+    fn default() -> Self {
+        Self {
+            status_code: 200,
+            description: String::new(),
+            content_type: "application/json".to_string(),
+            schema: None,
+            example: None,
+        }
+    }
+}
+
+impl Default for ResponseSchema {
+    fn default() -> Self {
+        Self {
+            schema_type: "object".to_string(),
+            properties: vec![],
+            is_wrapped: false,
+            items_schema: None,
+            ref_name: None,
+        }
+    }
+}
+
+impl Default for ResponseProperty {
+    fn default() -> Self {
+        Self {
+            name: String::new(),
+            property_type: "string".to_string(),
+            required: false,
+            description: None,
+            nested_properties: None,
+            items_type: None,
+            example: None,
+            format: None,
         }
     }
 }

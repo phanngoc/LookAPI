@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import {
   Plus,
   Trash2,
@@ -63,6 +63,21 @@ export function ScenarioList({ projectId, selectedScenario, onSelectScenario }: 
     importProject,
     isExporting,
   } = useScenarioYaml(projectId);
+
+  // Listen for scenario-created events to auto-refresh the list
+  useEffect(() => {
+    const handleScenarioCreated = (event: CustomEvent) => {
+      if (event.detail.projectId === projectId) {
+        console.log('[ScenarioList] Scenario created, refreshing list...');
+        refetch();
+      }
+    };
+    
+    window.addEventListener('scenario-created', handleScenarioCreated as EventListener);
+    return () => {
+      window.removeEventListener('scenario-created', handleScenarioCreated as EventListener);
+    };
+  }, [projectId, refetch]);
 
   const filteredScenarios = scenarios.filter((s) =>
     s.name.toLowerCase().includes(searchQuery.toLowerCase())

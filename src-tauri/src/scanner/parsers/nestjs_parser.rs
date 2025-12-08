@@ -1,6 +1,7 @@
 use crate::scanner::parsers::example_generator::ExampleGenerator;
 use crate::scanner::types::{
-    Authentication, Authorization, BusinessLogic, EndpointParameter, ScannedEndpoint,
+    Authentication, Authorization, BusinessLogic, EndpointParameter, EndpointResponse,
+    ResponseProperty, ResponseSchema, ScannedEndpoint,
 };
 use glob::glob;
 use regex::Regex;
@@ -13,13 +14,18 @@ struct MethodInfo {
     method_name: String,
     params: String,
     method_auth: Authentication,
+    return_type: Option<String>,
+    http_code: Option<u16>,
 }
 
 pub struct NestJSParser {
     project_path: PathBuf,
     controller_files_cache: HashMap<String, String>,
     dto_files_cache: HashMap<String, String>,
+    response_dto_files_cache: HashMap<String, String>,
+    entity_files_cache: HashMap<String, String>,
     global_prefix: Option<String>,
+    has_global_wrapper: bool,
 }
 
 impl NestJSParser {
@@ -28,7 +34,10 @@ impl NestJSParser {
             project_path,
             controller_files_cache: HashMap::new(),
             dto_files_cache: HashMap::new(),
+            response_dto_files_cache: HashMap::new(),
+            entity_files_cache: HashMap::new(),
             global_prefix: None,
+            has_global_wrapper: false,
         }
     }
 
@@ -62,10 +71,15 @@ impl NestJSParser {
     pub async fn parse_endpoints(&mut self) -> Result<Vec<ScannedEndpoint>, String> {
         // Step 0: Extract global prefix from main.ts
         self.global_prefix = self.extract_global_prefix();
+        
+        // Step 0.5: Detect global response wrapper (TransformInterceptor)
+        self.has_global_wrapper = self.detect_global_wrapper();
 
         // Step 1: Build caches
         self.build_controller_files_cache().await?;
         self.build_dto_files_cache().await?;
+        self.build_response_dto_files_cache().await?;
+        self.build_entity_files_cache().await?;
 
         // Step 2: Parse all controller files
         let mut endpoints = Vec::new();
@@ -198,6 +212,8 @@ impl NestJSParser {
                             file_path,
                             &controller_auth,
                             &method_info.method_auth,
+                            method_info.return_type.as_deref(),
+                            method_info.http_code,
                         )?;
 
                         endpoints.push(endpoint);
@@ -237,13 +253,16 @@ impl NestJSParser {
         _http_method: &str,
     ) -> Option<MethodInfo> {
         // Look ahead from decorator position, but limit search to avoid matching wrong methods
-        // Find the next method definition within reasonable distance (e.g., next 500 chars)
-        let search_end = (decorator_start + 500).min(content.len());
+        // Find the next method definition within reasonable distance (e.g., next 800 chars)
+        let search_end = (decorator_start + 800).min(content.len());
         let remaining = &content[decorator_start..search_end];
 
-        // Find the next method definition: async methodName(...) or methodName(...)
+        // Find the next method definition: async methodName(...): Promise<Type> or methodName(...)
         // Skip comments and other decorators
-        let method_re = Regex::new(r"(?:async\s+)?(\w+)\s*\(([^)]*)\)").ok()?;
+        let method_re = Regex::new(r"(?:async\s+)?(\w+)\s*\(([^)]*)\)(?:\s*:\s*Promise\s*<\s*(\w+)\s*>)?").ok()?;
+        
+        // Extract @HttpCode decorator if present
+        let http_code = self.extract_http_code(remaining);
         
         // Try to find method, but skip if it looks like it's part of a decorator or comment
         for method_cap in method_re.captures_iter(remaining) {
@@ -260,6 +279,9 @@ impl NestJSParser {
             if let (Some(name_match), Some(params_match)) = (method_cap.get(1), method_cap.get(2)) {
                 let method_name = name_match.as_str().to_string();
                 let params = params_match.as_str().to_string();
+                
+                // Extract return type from Promise<Type>
+                let return_type = method_cap.get(3).map(|m| m.as_str().to_string());
 
                 // Extract method-level authentication
                 // Look for @UseGuards between decorator and method
@@ -270,6 +292,8 @@ impl NestJSParser {
                     method_name,
                     params,
                     method_auth,
+                    return_type,
+                    http_code,
                 });
             }
         }
@@ -340,6 +364,8 @@ impl NestJSParser {
         file_path: &Path,
         controller_auth: &Authentication,
         method_auth: &Authentication,
+        return_type: Option<&str>,
+        http_code: Option<u16>,
     ) -> Result<ScannedEndpoint, String> {
         // Use method-level auth if present, otherwise use controller-level
         let auth = if method_auth.required {
@@ -358,6 +384,9 @@ impl NestJSParser {
         let mut all_params = path_params;
         all_params.extend(parameters);
 
+        // Build response definitions
+        let responses = self.build_responses(method, return_type, http_code, &auth);
+
         Ok(ScannedEndpoint {
             path: path.to_string(),
             method: method.to_string(),
@@ -374,6 +403,7 @@ impl NestJSParser {
             },
             authentication: auth,
             authorization: Authorization::default(),
+            responses,
         })
     }
 
@@ -753,5 +783,496 @@ impl NestJSParser {
         }
 
         seen.into_values().collect()
+    }
+
+    // ============================================================================
+    // Response Parsing Methods
+    // ============================================================================
+
+    /// Detect if the app uses global response wrapper (TransformInterceptor)
+    fn detect_global_wrapper(&self) -> bool {
+        let main_paths = vec![
+            self.project_path.join("src/main.ts"),
+            self.project_path.join("src/main.js"),
+        ];
+
+        for main_path in main_paths {
+            if let Ok(content) = fs::read_to_string(&main_path) {
+                // Check for useGlobalInterceptors with TransformInterceptor
+                if content.contains("useGlobalInterceptors") && 
+                   (content.contains("TransformInterceptor") || content.contains("transform")) {
+                    return true;
+                }
+            }
+        }
+
+        false
+    }
+
+    /// Extract @HttpCode decorator value
+    fn extract_http_code(&self, content: &str) -> Option<u16> {
+        // Pattern: @HttpCode(HttpStatus.OK) or @HttpCode(200)
+        let patterns = vec![
+            (r"@HttpCode\s*\(\s*HttpStatus\.OK\s*\)", 200u16),
+            (r"@HttpCode\s*\(\s*HttpStatus\.CREATED\s*\)", 201u16),
+            (r"@HttpCode\s*\(\s*HttpStatus\.NO_CONTENT\s*\)", 204u16),
+            (r"@HttpCode\s*\(\s*HttpStatus\.ACCEPTED\s*\)", 202u16),
+        ];
+
+        for (pattern, code) in patterns {
+            if let Ok(re) = Regex::new(pattern) {
+                if re.is_match(content) {
+                    return Some(code);
+                }
+            }
+        }
+
+        // Try numeric pattern: @HttpCode(200)
+        if let Ok(re) = Regex::new(r"@HttpCode\s*\(\s*(\d+)\s*\)") {
+            if let Some(cap) = re.captures(content) {
+                if let Some(code_match) = cap.get(1) {
+                    if let Ok(code) = code_match.as_str().parse::<u16>() {
+                        return Some(code);
+                    }
+                }
+            }
+        }
+
+        None
+    }
+
+    /// Build response definitions for an endpoint
+    fn build_responses(
+        &self,
+        http_method: &str,
+        return_type: Option<&str>,
+        http_code: Option<u16>,
+        auth: &Authentication,
+    ) -> Vec<EndpointResponse> {
+        let mut responses = Vec::new();
+
+        // Determine default success status code
+        let success_code = http_code.unwrap_or_else(|| {
+            match http_method {
+                "POST" => 201,
+                "DELETE" => 200,
+                _ => 200,
+            }
+        });
+
+        // Build success response schema
+        let schema = if let Some(type_name) = return_type {
+            self.build_response_schema(type_name)
+        } else {
+            None
+        };
+
+        // Wrap with global wrapper if present
+        let final_schema = if self.has_global_wrapper {
+            self.wrap_with_success_wrapper(schema)
+        } else {
+            schema
+        };
+
+        // Add success response
+        let success_description = match http_method {
+            "GET" => "Success",
+            "POST" => "Created successfully",
+            "PUT" | "PATCH" => "Updated successfully",
+            "DELETE" => "Deleted successfully",
+            _ => "Success",
+        };
+
+        responses.push(EndpointResponse {
+            status_code: success_code,
+            description: success_description.to_string(),
+            content_type: "application/json".to_string(),
+            schema: final_schema,
+            example: None,
+        });
+
+        // Add error responses based on auth requirements
+        if auth.required {
+            responses.push(EndpointResponse {
+                status_code: 401,
+                description: "Unauthorized - Invalid or missing token".to_string(),
+                content_type: "application/json".to_string(),
+                schema: Some(self.build_error_response_schema()),
+                example: None,
+            });
+        }
+
+        // Add common error responses
+        responses.push(EndpointResponse {
+            status_code: 400,
+            description: "Bad Request - Validation error".to_string(),
+            content_type: "application/json".to_string(),
+            schema: Some(self.build_error_response_schema()),
+            example: None,
+        });
+
+        // Add 404 for endpoints with path parameters
+        if http_method == "GET" || http_method == "PUT" || http_method == "PATCH" || http_method == "DELETE" {
+            responses.push(EndpointResponse {
+                status_code: 404,
+                description: "Not Found".to_string(),
+                content_type: "application/json".to_string(),
+                schema: Some(self.build_error_response_schema()),
+                example: None,
+            });
+        }
+
+        responses
+    }
+
+    /// Build response schema from return type (DTO or Entity)
+    fn build_response_schema(&self, type_name: &str) -> Option<ResponseSchema> {
+        // Try to find in response DTO cache first
+        if let Some(file_path) = self.response_dto_files_cache.get(type_name) {
+            if let Ok(content) = fs::read_to_string(file_path) {
+                return self.parse_response_dto_content(&content, type_name);
+            }
+        }
+
+        // Try to find in entity cache
+        if let Some(file_path) = self.entity_files_cache.get(type_name) {
+            if let Ok(content) = fs::read_to_string(file_path) {
+                return self.parse_entity_content(&content, type_name);
+            }
+        }
+
+        // Try without "Dto" suffix
+        let type_without_dto = type_name.trim_end_matches("Dto").trim_end_matches("Response");
+        if let Some(file_path) = self.entity_files_cache.get(type_without_dto) {
+            if let Ok(content) = fs::read_to_string(file_path) {
+                return self.parse_entity_content(&content, type_without_dto);
+            }
+        }
+
+        // Return a generic object schema
+        Some(ResponseSchema {
+            schema_type: "object".to_string(),
+            properties: vec![],
+            is_wrapped: false,
+            items_schema: None,
+            ref_name: Some(type_name.to_string()),
+        })
+    }
+
+    /// Wrap response with {success: true, data: ...} structure
+    fn wrap_with_success_wrapper(&self, inner_schema: Option<ResponseSchema>) -> Option<ResponseSchema> {
+        let data_property = ResponseProperty {
+            name: "data".to_string(),
+            property_type: inner_schema.as_ref().map(|s| s.schema_type.clone()).unwrap_or_else(|| "object".to_string()),
+            required: true,
+            description: Some("Response data".to_string()),
+            nested_properties: inner_schema.as_ref().and_then(|s| {
+                if s.properties.is_empty() { None } else { Some(s.properties.clone()) }
+            }),
+            items_type: inner_schema.as_ref().and_then(|s| s.items_schema.as_ref().map(|i| i.schema_type.clone())),
+            example: None,
+            format: None,
+        };
+
+        Some(ResponseSchema {
+            schema_type: "object".to_string(),
+            properties: vec![
+                ResponseProperty {
+                    name: "success".to_string(),
+                    property_type: "boolean".to_string(),
+                    required: true,
+                    description: Some("Indicates if the request was successful".to_string()),
+                    nested_properties: None,
+                    items_type: None,
+                    example: Some(Value::Bool(true)),
+                    format: None,
+                },
+                data_property,
+            ],
+            is_wrapped: true,
+            items_schema: None,
+            ref_name: None,
+        })
+    }
+
+    /// Build error response schema
+    fn build_error_response_schema(&self) -> ResponseSchema {
+        ResponseSchema {
+            schema_type: "object".to_string(),
+            properties: vec![
+                ResponseProperty {
+                    name: "statusCode".to_string(),
+                    property_type: "number".to_string(),
+                    required: true,
+                    description: Some("HTTP status code".to_string()),
+                    nested_properties: None,
+                    items_type: None,
+                    example: Some(Value::Number(serde_json::Number::from(400))),
+                    format: None,
+                },
+                ResponseProperty {
+                    name: "message".to_string(),
+                    property_type: "string".to_string(),
+                    required: true,
+                    description: Some("Error message".to_string()),
+                    nested_properties: None,
+                    items_type: None,
+                    example: Some(Value::String("Validation failed".to_string())),
+                    format: None,
+                },
+                ResponseProperty {
+                    name: "timestamp".to_string(),
+                    property_type: "string".to_string(),
+                    required: false,
+                    description: Some("Timestamp of the error".to_string()),
+                    nested_properties: None,
+                    items_type: None,
+                    example: None,
+                    format: Some("date-time".to_string()),
+                },
+                ResponseProperty {
+                    name: "path".to_string(),
+                    property_type: "string".to_string(),
+                    required: false,
+                    description: Some("Request path".to_string()),
+                    nested_properties: None,
+                    items_type: None,
+                    example: None,
+                    format: None,
+                },
+            ],
+            is_wrapped: false,
+            items_schema: None,
+            ref_name: Some("ErrorResponse".to_string()),
+        }
+    }
+
+    /// Build response DTO files cache
+    async fn build_response_dto_files_cache(&mut self) -> Result<(), String> {
+        // Search for response DTO files
+        let patterns = vec![
+            format!("{}/**/dto/*response*.dto.ts", self.project_path.to_string_lossy()),
+            format!("{}/**/dto/*-response.dto.ts", self.project_path.to_string_lossy()),
+        ];
+
+        for pattern_str in patterns {
+            if let Ok(entries) = glob(&pattern_str) {
+                for entry in entries.flatten() {
+                    if let Ok(content) = fs::read_to_string(&entry) {
+                        // Extract all class names from file (can have multiple)
+                        self.extract_all_dto_classes(&content, &entry.to_string_lossy().to_string());
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Extract all DTO classes from a file
+    fn extract_all_dto_classes(&mut self, content: &str, file_path: &str) {
+        let class_re = Regex::new(r"export\s+class\s+(\w+(?:Dto|Response)?)\s*(?:extends|implements|\{)").ok();
+        
+        if let Some(re) = class_re {
+            for cap in re.captures_iter(content) {
+                if let Some(class_match) = cap.get(1) {
+                    let class_name = class_match.as_str().to_string();
+                    self.response_dto_files_cache.insert(class_name, file_path.to_string());
+                }
+            }
+        }
+    }
+
+    /// Build entity files cache
+    async fn build_entity_files_cache(&mut self) -> Result<(), String> {
+        let pattern_str = format!("{}/**/*.entity.ts", self.project_path.to_string_lossy());
+
+        if let Ok(entries) = glob(&pattern_str) {
+            for entry in entries.flatten() {
+                if let Ok(content) = fs::read_to_string(&entry) {
+                    if let Some(entity_class) = self.extract_entity_class(&content) {
+                        self.entity_files_cache
+                            .insert(entity_class, entry.to_string_lossy().to_string());
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Extract entity class name
+    fn extract_entity_class(&self, content: &str) -> Option<String> {
+        let class_re = Regex::new(r"@Entity\s*(?:\([^)]*\))?\s*export\s+class\s+(\w+)").ok()?;
+        
+        if let Some(cap) = class_re.captures(content) {
+            return cap.get(1).map(|m| m.as_str().to_string());
+        }
+
+        // Try alternative pattern: export class X with @Entity above
+        let alt_re = Regex::new(r"export\s+class\s+(\w+)\s*(?:extends|implements|\{)").ok()?;
+        if content.contains("@Entity") {
+            if let Some(cap) = alt_re.captures(content) {
+                return cap.get(1).map(|m| m.as_str().to_string());
+            }
+        }
+
+        None
+    }
+
+    /// Parse response DTO content to extract schema
+    fn parse_response_dto_content(&self, content: &str, type_name: &str) -> Option<ResponseSchema> {
+        let properties = self.extract_properties_from_content(content);
+        
+        Some(ResponseSchema {
+            schema_type: "object".to_string(),
+            properties,
+            is_wrapped: false,
+            items_schema: None,
+            ref_name: Some(type_name.to_string()),
+        })
+    }
+
+    /// Parse entity content to extract schema
+    fn parse_entity_content(&self, content: &str, type_name: &str) -> Option<ResponseSchema> {
+        let properties = self.extract_properties_from_content(content);
+        
+        Some(ResponseSchema {
+            schema_type: "object".to_string(),
+            properties,
+            is_wrapped: false,
+            items_schema: None,
+            ref_name: Some(type_name.to_string()),
+        })
+    }
+
+    /// Extract properties from DTO or Entity content
+    fn extract_properties_from_content(&self, content: &str) -> Vec<ResponseProperty> {
+        let mut properties = Vec::new();
+        let lines: Vec<&str> = content.lines().collect();
+        
+        let mut i = 0;
+        while i < lines.len() {
+            let line = lines[i].trim();
+            
+            // Check for property declaration with type
+            if line.contains(':') && !line.starts_with("//") && !line.starts_with("*") 
+               && !line.starts_with("/**") && !line.starts_with("constructor") 
+               && !line.starts_with("async") && !line.starts_with("private") 
+               && !line.starts_with("protected") && !line.starts_with("@") {
+                
+                // Look backwards for decorators
+                let mut decorators = Vec::new();
+                let mut j = i.saturating_sub(1);
+                while j < lines.len() && (lines[j].trim().starts_with('@') || lines[j].trim().is_empty()) {
+                    let trimmed = lines[j].trim();
+                    if trimmed.starts_with('@') {
+                        decorators.insert(0, trimmed);
+                    }
+                    if j == 0 { break; }
+                    j = j.saturating_sub(1);
+                }
+                
+                if let Some(prop) = self.parse_response_property_line(line, &decorators) {
+                    properties.push(prop);
+                }
+            }
+            
+            i += 1;
+        }
+        
+        properties
+    }
+
+    /// Parse a property line from response DTO or entity
+    fn parse_response_property_line(&self, line: &str, decorators: &[&str]) -> Option<ResponseProperty> {
+        // Extract property name and type: propertyName: type; or propertyName?: type;
+        let prop_re = Regex::new(r"(\w+)\??\s*:\s*([^;=]+)").ok()?;
+        let cap = prop_re.captures(line)?;
+        
+        let property_name = cap.get(1)?.as_str();
+        let raw_type = cap.get(2)?.as_str().trim();
+        
+        // Check if optional
+        let is_optional = line.contains('?');
+        
+        // Determine property type
+        let (property_type, items_type, format) = self.parse_type_string(raw_type);
+        
+        // Extract example from decorators
+        let mut example_value: Option<Value> = None;
+        let mut description: Option<String> = None;
+        
+        for decorator in decorators {
+            if decorator.contains("@ApiProperty") {
+                // Extract example
+                if let Ok(example_re) = Regex::new(r"example\s*:\s*([^,}]+)") {
+                    if let Some(example_cap) = example_re.captures(decorator) {
+                        if let Some(example_match) = example_cap.get(1) {
+                            example_value = self.parse_example_value(example_match.as_str().trim());
+                        }
+                    }
+                }
+                
+                // Extract description
+                if let Ok(desc_re) = Regex::new(r#"description\s*:\s*['"]([^'"]+)['"]"#) {
+                    if let Some(desc_cap) = desc_re.captures(decorator) {
+                        if let Some(desc_match) = desc_cap.get(1) {
+                            description = Some(desc_match.as_str().to_string());
+                        }
+                    }
+                }
+            }
+        }
+        
+        Some(ResponseProperty {
+            name: property_name.to_string(),
+            property_type,
+            required: !is_optional,
+            description,
+            nested_properties: None,
+            items_type,
+            example: example_value,
+            format,
+        })
+    }
+
+    /// Parse TypeScript type string to determine JSON schema type
+    fn parse_type_string(&self, raw_type: &str) -> (String, Option<String>, Option<String>) {
+        let type_str = raw_type.trim();
+        
+        // Check for array types
+        if type_str.ends_with("[]") {
+            let inner_type = type_str.trim_end_matches("[]").trim();
+            let (inner_json_type, _, format) = self.parse_type_string(inner_type);
+            return ("array".to_string(), Some(inner_json_type), format);
+        }
+        
+        // Check for Array<Type>
+        if type_str.starts_with("Array<") && type_str.ends_with('>') {
+            let inner_type = &type_str[6..type_str.len()-1];
+            let (inner_json_type, _, format) = self.parse_type_string(inner_type);
+            return ("array".to_string(), Some(inner_json_type), format);
+        }
+        
+        // Map TypeScript types to JSON schema types
+        let (json_type, format) = match type_str {
+            "string" | "String" => ("string".to_string(), None),
+            "number" | "Number" | "int" | "float" | "decimal" => ("number".to_string(), None),
+            "boolean" | "Boolean" => ("boolean".to_string(), None),
+            "Date" => ("string".to_string(), Some("date-time".to_string())),
+            "uuid" | "UUID" => ("string".to_string(), Some("uuid".to_string())),
+            _ => {
+                // Check for enum types or complex objects
+                if type_str.contains('{') || type_str.contains('|') {
+                    ("object".to_string(), None)
+                } else {
+                    // Treat as object reference
+                    ("object".to_string(), None)
+                }
+            }
+        };
+        
+        (json_type, None, format)
     }
 }

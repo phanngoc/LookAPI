@@ -940,6 +940,7 @@ impl LaravelParser {
             },
             authentication: Authentication::default(),
             authorization: Authorization::default(),
+            responses: Vec::new(),
         })
     }
 

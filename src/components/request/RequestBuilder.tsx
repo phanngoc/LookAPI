@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { RotateCcw, FileJson, Code2, Settings2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import {
@@ -12,6 +13,7 @@ import {
 import { UrlBar } from './UrlBar';
 import { CodeEditor } from '@/components/shared/CodeEditor';
 import { ResponseViewer } from '@/components/response/ResponseViewer';
+import { ResponseSchemaViewer } from './ResponseSchemaViewer';
 import { APIEndpoint, APIResponse } from '@/types/api';
 import { tauriService } from '@/services/tauri';
 import { useEnvironment } from '@/contexts/EnvironmentContext';
@@ -217,6 +219,15 @@ export function RequestBuilder({ endpoint }: RequestBuilderProps) {
                     <Settings2 className="w-3.5 h-3.5" />
                     Headers
                   </TabsTrigger>
+                  <TabsTrigger value="response-schema" className="text-xs gap-1.5">
+                    <FileJson className="w-3.5 h-3.5" />
+                    Response Schema
+                    {endpoint.responses && endpoint.responses.length > 0 && (
+                      <Badge variant="secondary" className="text-[10px] px-1 py-0 ml-1">
+                        {endpoint.responses.length}
+                      </Badge>
+                    )}
+                  </TabsTrigger>
                 </TabsList>
 
                 <TooltipProvider>
@@ -281,6 +292,10 @@ export function RequestBuilder({ endpoint }: RequestBuilderProps) {
                     className="h-full"
                   />
                 </div>
+              </TabsContent>
+
+              <TabsContent value="response-schema" className="flex-1 m-0 p-0 overflow-auto">
+                <ResponseSchemaViewer responses={endpoint.responses} />
               </TabsContent>
             </Tabs>
           </div>

@@ -53,6 +53,9 @@ pub fn init_database() -> Result<()> {
     // Add base_url column to projects table if it doesn't exist (migration)
     let _ = conn.execute("ALTER TABLE projects ADD COLUMN base_url TEXT", []);
 
+    // Add responses column to endpoints table if it doesn't exist (migration)
+    let _ = conn.execute("ALTER TABLE endpoints ADD COLUMN responses TEXT DEFAULT '[]'", []);
+
     conn.execute(
         "CREATE TABLE IF NOT EXISTS test_suites (
             id TEXT PRIMARY KEY,
@@ -174,12 +177,16 @@ pub fn get_all_endpoints() -> Result<Vec<ApiEndpoint>, String> {
     let conn = Connection::open(get_db_path())
         .map_err(|e| format!("DB connection error: {}", e))?;
 
-    let mut stmt = conn.prepare("SELECT id, project_id, name, method, path, service, description, category, parameters, explanation FROM endpoints")
+    let mut stmt = conn.prepare("SELECT id, project_id, name, method, path, service, description, category, parameters, explanation, responses FROM endpoints")
         .map_err(|e| format!("Prepare error: {}", e))?;
 
     let endpoints = stmt.query_map([], |row| {
         let params_json: String = row.get(8)?;
         let parameters: Vec<crate::types::ApiParameter> = serde_json::from_str(&params_json)
+            .unwrap_or_default();
+        
+        let responses_json: String = row.get::<_, Option<String>>(10)?.unwrap_or_else(|| "[]".to_string());
+        let responses: Vec<crate::types::ApiResponseDefinition> = serde_json::from_str(&responses_json)
             .unwrap_or_default();
 
         Ok(ApiEndpoint {
@@ -193,6 +200,7 @@ pub fn get_all_endpoints() -> Result<Vec<ApiEndpoint>, String> {
             category: row.get(7)?,
             parameters,
             explanation: row.get(9)?,
+            responses: Some(responses),
         })
     })
     .map_err(|e| format!("Query error: {}", e))?
@@ -209,12 +217,15 @@ pub fn save_endpoint(endpoint: ApiEndpoint) -> Result<(), String> {
     let params_json = serde_json::to_string(&endpoint.parameters)
         .map_err(|e| format!("Serialization error: {}", e))?;
 
+    let responses_json = serde_json::to_string(&endpoint.responses.unwrap_or_default())
+        .map_err(|e| format!("Serialization error: {}", e))?;
+
     let now = chrono::Utc::now().timestamp();
 
     conn.execute(
         "INSERT OR REPLACE INTO endpoints
-        (id, project_id, name, method, path, service, description, category, parameters, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (id, project_id, name, method, path, service, description, category, parameters, explanation, responses, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         rusqlite::params![
             endpoint.id,
             endpoint.project_id,
@@ -225,6 +236,8 @@ pub fn save_endpoint(endpoint: ApiEndpoint) -> Result<(), String> {
             endpoint.description,
             endpoint.category,
             params_json,
+            endpoint.explanation,
+            responses_json,
             now
         ],
     )
@@ -331,7 +344,7 @@ pub fn get_endpoints_by_project(project_id: String) -> Result<Vec<ApiEndpoint>, 
         .map_err(|e| format!("DB connection error: {}", e))?;
 
     let mut stmt = conn.prepare(
-        "SELECT id, project_id, name, method, path, service, description, category, parameters, explanation 
+        "SELECT id, project_id, name, method, path, service, description, category, parameters, explanation, responses 
          FROM endpoints WHERE project_id = ?"
     )
     .map_err(|e| format!("Prepare error: {}", e))?;
@@ -339,6 +352,10 @@ pub fn get_endpoints_by_project(project_id: String) -> Result<Vec<ApiEndpoint>, 
     let endpoints = stmt.query_map([&project_id], |row| {
         let params_json: String = row.get(8)?;
         let parameters: Vec<crate::types::ApiParameter> = serde_json::from_str(&params_json)
+            .unwrap_or_default();
+        
+        let responses_json: String = row.get::<_, Option<String>>(10)?.unwrap_or_else(|| "[]".to_string());
+        let responses: Vec<crate::types::ApiResponseDefinition> = serde_json::from_str(&responses_json)
             .unwrap_or_default();
 
         Ok(ApiEndpoint {
@@ -352,6 +369,7 @@ pub fn get_endpoints_by_project(project_id: String) -> Result<Vec<ApiEndpoint>, 
             category: row.get(7)?,
             parameters,
             explanation: row.get(9)?,
+            responses: Some(responses),
         })
     })
     .map_err(|e| format!("Query error: {}", e))?
