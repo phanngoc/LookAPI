@@ -80,6 +80,15 @@ pub fn run() {
             commands::update_scenario_from_yaml,
             // CSV commands
             commands::preview_csv_file,
+            // Performance testing commands
+            commands::create_performance_test,
+            commands::get_performance_tests,
+            commands::get_performance_test,
+            commands::update_performance_test,
+            commands::delete_performance_test,
+            commands::run_performance_test,
+            commands::get_performance_test_runs,
+            commands::get_performance_test_run,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

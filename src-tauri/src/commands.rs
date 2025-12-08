@@ -6,6 +6,10 @@ use scenario::yaml::{
     yaml_to_scenario_with_steps, create_import_preview, create_project_import_preview,
     generate_yaml_template, generate_yaml_template_with_ai,
 };
+use scenario::performance::{
+    PerformanceTestConfig, PerformanceTestRun, PerformanceTestType,
+    CreatePerformanceTestInput, Stage, Threshold,
+};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use tauri_plugin_dialog::DialogExt;
@@ -850,4 +854,167 @@ pub async fn preview_csv_file(
     
     scenario::csv_reader::preview_csv_file(&file_path, &csv_config, 10)
         .map_err(|e| format!("Failed to preview CSV: {}", e))
+}
+
+// ============================================================================
+// Performance Testing Commands
+// ============================================================================
+
+/// Create a new performance test configuration
+#[tauri::command]
+pub async fn create_performance_test(
+    input: CreatePerformanceTestInput,
+) -> Result<PerformanceTestConfig, String> {
+    log::info!("[Command] create_performance_test called for scenario: {}", input.scenario_id);
+    
+    let now = chrono::Utc::now().timestamp();
+    
+    let config = PerformanceTestConfig {
+        id: Uuid::new_v4().to_string(),
+        scenario_id: input.scenario_id,
+        name: input.name,
+        test_type: PerformanceTestType::from_str(&input.test_type),
+        vus: input.vus,
+        duration_secs: input.duration_secs,
+        iterations: input.iterations,
+        stages: input.stages,
+        thresholds: input.thresholds.unwrap_or_default(),
+        created_at: now,
+        updated_at: now,
+    };
+    
+    database::save_performance_test_config(config.clone())?;
+    log::info!("[Command] Performance test config created: {}", config.id);
+    
+    Ok(config)
+}
+
+/// Get all performance test configs for a scenario
+#[tauri::command]
+pub async fn get_performance_tests(
+    scenario_id: String,
+) -> Result<Vec<PerformanceTestConfig>, String> {
+    database::get_performance_test_configs(&scenario_id)
+}
+
+/// Get a single performance test config
+#[tauri::command]
+pub async fn get_performance_test(
+    config_id: String,
+) -> Result<Option<PerformanceTestConfig>, String> {
+    database::get_performance_test_config(&config_id)
+}
+
+/// Update a performance test configuration
+#[tauri::command]
+pub async fn update_performance_test(
+    config_id: String,
+    name: Option<String>,
+    test_type: Option<String>,
+    vus: Option<u32>,
+    duration_secs: Option<u64>,
+    iterations: Option<u64>,
+    stages: Option<Vec<Stage>>,
+    thresholds: Option<Vec<Threshold>>,
+) -> Result<PerformanceTestConfig, String> {
+    log::info!("[Command] update_performance_test called: {}", config_id);
+    
+    let existing = database::get_performance_test_config(&config_id)?
+        .ok_or_else(|| "Performance test config not found".to_string())?;
+    
+    let now = chrono::Utc::now().timestamp();
+    
+    let updated = PerformanceTestConfig {
+        id: existing.id,
+        scenario_id: existing.scenario_id,
+        name: name.unwrap_or(existing.name),
+        test_type: test_type.map(|t| PerformanceTestType::from_str(&t)).unwrap_or(existing.test_type),
+        vus: vus.or(existing.vus),
+        duration_secs: duration_secs.or(existing.duration_secs),
+        iterations: iterations.or(existing.iterations),
+        stages: stages.or(existing.stages),
+        thresholds: thresholds.unwrap_or(existing.thresholds),
+        created_at: existing.created_at,
+        updated_at: now,
+    };
+    
+    database::save_performance_test_config(updated.clone())?;
+    log::info!("[Command] Performance test config updated: {}", updated.id);
+    
+    Ok(updated)
+}
+
+/// Delete a performance test configuration
+#[tauri::command]
+pub async fn delete_performance_test(
+    config_id: String,
+) -> Result<(), String> {
+    log::info!("[Command] delete_performance_test called: {}", config_id);
+    database::delete_performance_test_config(&config_id)
+}
+
+/// Run a performance test
+#[tauri::command]
+pub async fn run_performance_test(
+    app: tauri::AppHandle,
+    config_id: String,
+) -> Result<PerformanceTestRun, String> {
+    log::info!("[Command] run_performance_test called for config: {}", config_id);
+    
+    // Get the config
+    let config = database::get_performance_test_config(&config_id)?
+        .ok_or_else(|| format!("Performance test config not found: {}", config_id))?;
+    
+    // Get the scenario
+    let scenario = database::get_test_scenario(&config.scenario_id)?
+        .ok_or_else(|| format!("Scenario not found: {}", config.scenario_id))?;
+    
+    // Get the steps
+    let steps = database::get_test_scenario_steps(&config.scenario_id)?;
+    
+    // Get the project for base URL
+    let project = database::get_project(&scenario.project_id)?
+        .ok_or_else(|| format!("Project not found: {}", scenario.project_id))?;
+    
+    let base_url = project.base_url;
+    
+    log::info!("[Command] Running performance test: {} on scenario: {}", config.name, scenario.name);
+    log::info!("[Command] Base URL: {:?}, VUs: {:?}, Duration: {:?}s", 
+        base_url, config.vus, config.duration_secs);
+    
+    // Run the performance test
+    let run = scenario::performance::run_performance_test(
+        scenario,
+        steps,
+        config,
+        base_url,
+        Some(app),
+    ).await;
+    
+    // Save the run result
+    database::save_performance_test_run(&run)?;
+    
+    log::info!("[Command] Performance test completed: status={:?}, requests={}, p95={}ms",
+        run.status,
+        run.metrics.as_ref().map(|m| m.total_requests).unwrap_or(0),
+        run.metrics.as_ref().map(|m| m.duration_p95).unwrap_or(0)
+    );
+    
+    Ok(run)
+}
+
+/// Get performance test runs for a config
+#[tauri::command]
+pub async fn get_performance_test_runs(
+    config_id: String,
+) -> Result<Vec<PerformanceTestRun>, String> {
+    database::get_performance_test_runs(&config_id)
+}
+
+/// Get a single performance test run
+#[tauri::command]
+pub async fn get_performance_test_run(
+    run_id: String,
+) -> Result<Option<PerformanceTestRun>, String> {
+    database::get_performance_test_run(&run_id)
 }

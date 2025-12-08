@@ -317,3 +317,178 @@ export default function () {
   sleep(0.1);
 }
 ```
+
+---
+
+## 4. Scenario-Based Performance Testing (LookAPI Integration)
+
+LookAPI tích hợp performance testing trực tiếp vào hệ thống, sử dụng các test scenario đã được định nghĩa trong database. Cách tiếp cận này cho phép test **toàn bộ flow** (end-to-end) thay vì chỉ test từng endpoint đơn lẻ.
+
+### 4.1. Khái niệm
+
+**Test Scenario** trong LookAPI là một chuỗi các request được thực thi tuần tự, với khả năng:
+- Truyền dữ liệu giữa các step (extract token từ login → dùng cho các request sau)
+- Assertions để validate response
+- Variable resolution ({{variable}} syntax)
+- Hỗ trợ CSV data cho data-driven testing
+
+**Performance Test** sử dụng scenario có sẵn và chạy với:
+- Multiple Virtual Users (VUs) đồng thời
+- Ramping stages (tăng/giảm VUs theo thời gian)
+- Thu thập metrics chi tiết
+- Thresholds để đánh giá pass/fail
+
+### 4.2. Performance Test Types
+
+| Type | Mô tả | VUs | Duration |
+|------|-------|-----|----------|
+| **Smoke** | Sanity check nhanh | 1-5 | 30s-2m |
+| **Load** | Baseline test với traffic bình thường | 10-100 | 10-30m |
+| **Stress** | Tìm breaking point | 100-500+ | 10-20m |
+| **Spike** | Test đột biến traffic | Tăng đột ngột | 2-5m |
+| **Soak** | Tìm memory leak, long-running | 30-100 | 1-24h |
+
+### 4.3. Cấu hình Performance Test
+
+```typescript
+interface PerformanceTestConfig {
+  id: string;
+  scenarioId: string;           // Link đến test scenario
+  name: string;
+  testType: 'smoke' | 'load' | 'stress' | 'spike' | 'soak';
+  
+  // Fixed VUs/Duration (cho smoke, soak)
+  vus?: number;
+  durationSecs?: number;
+  iterations?: number;
+  
+  // Ramping stages (cho load, stress, spike)
+  stages?: Array<{
+    durationSecs: number;
+    targetVus: number;
+  }>;
+  
+  // Thresholds
+  thresholds: Array<{
+    metric: string;             // 'http_req_duration', 'error_rate', etc.
+    condition: string;          // 'p(95)<500', 'rate<0.05'
+  }>;
+}
+```
+
+### 4.4. Metrics được thu thập
+
+| Metric | Mô tả |
+|--------|-------|
+| `totalRequests` | Tổng số requests |
+| `failedRequests` | Số requests thất bại |
+| `errorRate` | Tỷ lệ lỗi (0.0 - 1.0) |
+| `durationMin/Max/Avg` | Response time (ms) |
+| `durationMed` | Median (p50) |
+| `durationP90/P95/P99` | Percentiles |
+| `requestsPerSecond` | Throughput (RPS) |
+| `iterationsCompleted` | Số iteration hoàn thành |
+| `stepMetrics` | Metrics chi tiết cho từng step |
+
+### 4.5. Thresholds
+
+Thresholds cho phép định nghĩa tiêu chí pass/fail:
+
+```typescript
+// Duration-based
+{ metric: 'http_req_duration', condition: 'p(95)<500' }   // p95 < 500ms
+{ metric: 'http_req_duration', condition: 'avg<200' }     // avg < 200ms
+{ metric: 'http_req_duration', condition: 'max<1000' }    // max < 1s
+
+// Error rate
+{ metric: 'error_rate', condition: 'rate<0.05' }          // < 5% error
+{ metric: 'http_req_failed', condition: '<0.01' }         // < 1% failed
+
+// Throughput
+{ metric: 'rps', condition: '>100' }                      // > 100 req/s
+```
+
+### 4.6. Ví dụ: E-commerce Flow Performance Test
+
+**Test Scenario** (đã định nghĩa trong LookAPI):
+
+1. **Login**: POST /auth/login → Extract `token`
+2. **Get Products**: GET /products → Extract `productId`
+3. **Add to Cart**: POST /cart/items
+4. **Checkout**: POST /orders/checkout
+
+**Performance Test Configuration**:
+
+```json
+{
+  "name": "E-commerce Load Test",
+  "testType": "load",
+  "stages": [
+    { "durationSecs": 120, "targetVus": 50 },
+    { "durationSecs": 600, "targetVus": 50 },
+    { "durationSecs": 120, "targetVus": 0 }
+  ],
+  "thresholds": [
+    { "metric": "http_req_duration", "condition": "p(95)<800" },
+    { "metric": "error_rate", "condition": "rate<0.01" }
+  ]
+}
+```
+
+### 4.7. Real-time Events
+
+Trong quá trình chạy performance test, hệ thống emit các events để frontend có thể hiển thị progress real-time:
+
+| Event | Payload |
+|-------|---------|
+| `perf-started` | `{ runId, configId, scenarioId, startedAt }` |
+| `perf-progress` | `{ elapsedSecs, currentVus, totalRequests, rps, errorRate, p95Duration }` |
+| `perf-stage-changed` | `{ stageIndex, targetVus, durationSecs }` |
+| `perf-request-completed` | `{ vuId, stepName, durationMs, success, status }` |
+| `perf-completed` | `{ runId, run: PerformanceTestRun }` |
+
+### 4.8. API Commands
+
+```typescript
+// Tạo performance test config
+createPerformanceTest(input: CreatePerformanceTestInput): PerformanceTestConfig
+
+// Lấy danh sách configs cho scenario
+getPerformanceTests(scenarioId: string): PerformanceTestConfig[]
+
+// Chạy performance test
+runPerformanceTest(configId: string): PerformanceTestRun
+
+// Lấy kết quả test runs
+getPerformanceTestRuns(configId: string): PerformanceTestRun[]
+```
+
+### 4.9. Best Practices
+
+1. **Bắt đầu với Smoke test**: Chạy smoke test trước để đảm bảo scenario hoạt động đúng.
+
+2. **Định nghĩa thresholds hợp lý**: 
+   - Smoke: `p(95)<500ms, error_rate<5%`
+   - Load: `p(95)<800ms, error_rate<1%`
+   - Stress: `p(95)<2000ms, error_rate<10%`
+
+3. **Ramping stages**: Luôn có ramp-up và ramp-down để tránh shock hệ thống.
+
+4. **Monitor backend**: Kết hợp với monitoring (CPU, Memory, DB connections) để có cái nhìn toàn diện.
+
+5. **Data isolation**: Sử dụng test data riêng biệt để tránh ảnh hưởng production data.
+
+6. **Realistic think time**: Thêm delay giữa các step để mô phỏng user behavior thực tế.
+
+### 4.10. So sánh với k6
+
+| Feature | k6 | LookAPI Performance |
+|---------|-----|---------------------|
+| Language | JavaScript | Rust (backend) |
+| Scenario definition | JS script | UI + Database |
+| Variable sharing | JS scope | Variable extraction |
+| Real-time metrics | Console/Grafana | Built-in UI events |
+| Thresholds | ✅ | ✅ |
+| Stages (ramping) | ✅ | ✅ |
+| Distributed testing | ✅ (k6 Cloud) | Single machine |
+| Integration | Standalone | Built into API testing tool |

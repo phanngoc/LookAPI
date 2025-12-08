@@ -1,6 +1,10 @@
 use crate::types::{ApiEndpoint, TestSuite, QueryResult, Project, YamlFile};
 use crate::security::types::{SecurityTestCase, SecurityTestRun, ScanConfig};
 use crate::scenario::types::{TestScenario, TestScenarioStep, TestScenarioRun, TestStepType, ScenarioRunStatus};
+use crate::scenario::performance::{
+    PerformanceTestConfig, PerformanceTestRun, PerformanceTestType, PerformanceRunStatus,
+    Stage, Threshold,
+};
 use rusqlite::{Connection, Result};
 use std::path::PathBuf;
 
@@ -165,6 +169,45 @@ pub fn init_database() -> Result<()> {
             content TEXT NOT NULL,
             created_at INTEGER NOT NULL,
             FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+            FOREIGN KEY (scenario_id) REFERENCES test_scenarios(id) ON DELETE CASCADE
+        )",
+        [],
+    )?;
+
+    // Performance test configurations table
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS performance_test_configs (
+            id TEXT PRIMARY KEY,
+            scenario_id TEXT NOT NULL,
+            name TEXT NOT NULL,
+            test_type TEXT NOT NULL,
+            vus INTEGER,
+            duration_secs INTEGER,
+            iterations INTEGER,
+            stages TEXT DEFAULT '[]',
+            thresholds TEXT DEFAULT '[]',
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL,
+            FOREIGN KEY (scenario_id) REFERENCES test_scenarios(id) ON DELETE CASCADE
+        )",
+        [],
+    )?;
+
+    // Performance test runs table
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS performance_test_runs (
+            id TEXT PRIMARY KEY,
+            config_id TEXT NOT NULL,
+            scenario_id TEXT NOT NULL,
+            status TEXT NOT NULL,
+            started_at INTEGER NOT NULL,
+            completed_at INTEGER,
+            duration_ms INTEGER,
+            max_vus_reached INTEGER,
+            metrics TEXT,
+            threshold_results TEXT DEFAULT '[]',
+            error_message TEXT,
+            FOREIGN KEY (config_id) REFERENCES performance_test_configs(id) ON DELETE CASCADE,
             FOREIGN KEY (scenario_id) REFERENCES test_scenarios(id) ON DELETE CASCADE
         )",
         [],
@@ -1087,4 +1130,253 @@ pub fn delete_yaml_file(id: &str) -> Result<(), String> {
     .map_err(|e| format!("Delete error: {}", e))?;
 
     Ok(())
+}
+
+// ============================================================================
+// Performance Test Functions
+// ============================================================================
+
+/// Save a performance test configuration
+pub fn save_performance_test_config(config: PerformanceTestConfig) -> Result<(), String> {
+    let conn = Connection::open(get_db_path())
+        .map_err(|e| format!("DB error: {}", e))?;
+
+    let stages_json = serde_json::to_string(&config.stages.unwrap_or_default())
+        .map_err(|e| format!("Serialization error: {}", e))?;
+
+    let thresholds_json = serde_json::to_string(&config.thresholds)
+        .map_err(|e| format!("Serialization error: {}", e))?;
+
+    conn.execute(
+        "INSERT OR REPLACE INTO performance_test_configs 
+        (id, scenario_id, name, test_type, vus, duration_secs, iterations, stages, thresholds, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        rusqlite::params![
+            config.id,
+            config.scenario_id,
+            config.name,
+            config.test_type.as_str(),
+            config.vus,
+            config.duration_secs,
+            config.iterations,
+            stages_json,
+            thresholds_json,
+            config.created_at,
+            config.updated_at
+        ],
+    )
+    .map_err(|e| format!("Insert error: {}", e))?;
+
+    Ok(())
+}
+
+/// Get all performance test configs for a scenario
+pub fn get_performance_test_configs(scenario_id: &str) -> Result<Vec<PerformanceTestConfig>, String> {
+    let conn = Connection::open(get_db_path())
+        .map_err(|e| format!("DB error: {}", e))?;
+
+    let mut stmt = conn.prepare(
+        "SELECT id, scenario_id, name, test_type, vus, duration_secs, iterations, stages, thresholds, created_at, updated_at 
+         FROM performance_test_configs WHERE scenario_id = ? ORDER BY created_at DESC"
+    )
+    .map_err(|e| format!("Prepare error: {}", e))?;
+
+    let configs = stmt.query_map([scenario_id], |row| {
+        let test_type_str: String = row.get(3)?;
+        let stages_json: String = row.get(7)?;
+        let thresholds_json: String = row.get(8)?;
+
+        let stages: Option<Vec<Stage>> = serde_json::from_str(&stages_json).ok();
+        let thresholds: Vec<Threshold> = serde_json::from_str(&thresholds_json).unwrap_or_default();
+
+        Ok(PerformanceTestConfig {
+            id: row.get(0)?,
+            scenario_id: row.get(1)?,
+            name: row.get(2)?,
+            test_type: PerformanceTestType::from_str(&test_type_str),
+            vus: row.get(4)?,
+            duration_secs: row.get(5)?,
+            iterations: row.get(6)?,
+            stages,
+            thresholds,
+            created_at: row.get(9)?,
+            updated_at: row.get(10)?,
+        })
+    })
+    .map_err(|e| format!("Query error: {}", e))?
+    .collect::<Result<Vec<_>, _>>()
+    .map_err(|e| format!("Collection error: {}", e))?;
+
+    Ok(configs)
+}
+
+/// Get a single performance test config by ID
+pub fn get_performance_test_config(config_id: &str) -> Result<Option<PerformanceTestConfig>, String> {
+    let conn = Connection::open(get_db_path())
+        .map_err(|e| format!("DB error: {}", e))?;
+
+    let mut stmt = conn.prepare(
+        "SELECT id, scenario_id, name, test_type, vus, duration_secs, iterations, stages, thresholds, created_at, updated_at 
+         FROM performance_test_configs WHERE id = ?"
+    )
+    .map_err(|e| format!("Prepare error: {}", e))?;
+
+    let config = stmt.query_row([config_id], |row| {
+        let test_type_str: String = row.get(3)?;
+        let stages_json: String = row.get(7)?;
+        let thresholds_json: String = row.get(8)?;
+
+        let stages: Option<Vec<Stage>> = serde_json::from_str(&stages_json).ok();
+        let thresholds: Vec<Threshold> = serde_json::from_str(&thresholds_json).unwrap_or_default();
+
+        Ok(PerformanceTestConfig {
+            id: row.get(0)?,
+            scenario_id: row.get(1)?,
+            name: row.get(2)?,
+            test_type: PerformanceTestType::from_str(&test_type_str),
+            vus: row.get(4)?,
+            duration_secs: row.get(5)?,
+            iterations: row.get(6)?,
+            stages,
+            thresholds,
+            created_at: row.get(9)?,
+            updated_at: row.get(10)?,
+        })
+    });
+
+    match config {
+        Ok(c) => Ok(Some(c)),
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+        Err(e) => Err(format!("Query error: {}", e)),
+    }
+}
+
+/// Delete a performance test config and its runs
+pub fn delete_performance_test_config(config_id: &str) -> Result<(), String> {
+    let conn = Connection::open(get_db_path())
+        .map_err(|e| format!("DB error: {}", e))?;
+
+    // Delete associated runs first
+    conn.execute(
+        "DELETE FROM performance_test_runs WHERE config_id = ?",
+        rusqlite::params![config_id],
+    ).ok();
+
+    // Delete config
+    conn.execute(
+        "DELETE FROM performance_test_configs WHERE id = ?",
+        rusqlite::params![config_id],
+    )
+    .map_err(|e| format!("Delete error: {}", e))?;
+
+    Ok(())
+}
+
+/// Save a performance test run
+pub fn save_performance_test_run(run: &PerformanceTestRun) -> Result<(), String> {
+    let conn = Connection::open(get_db_path())
+        .map_err(|e| format!("DB error: {}", e))?;
+
+    let metrics_json = serde_json::to_string(&run.metrics)
+        .map_err(|e| format!("Serialization error: {}", e))?;
+
+    let threshold_results_json = serde_json::to_string(&run.threshold_results)
+        .map_err(|e| format!("Serialization error: {}", e))?;
+
+    conn.execute(
+        "INSERT INTO performance_test_runs 
+        (id, config_id, scenario_id, status, started_at, completed_at, duration_ms, max_vus_reached, metrics, threshold_results, error_message)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        rusqlite::params![
+            run.id,
+            run.config_id,
+            run.scenario_id,
+            run.status.as_str(),
+            run.started_at,
+            run.completed_at,
+            run.duration_ms,
+            run.max_vus_reached,
+            metrics_json,
+            threshold_results_json,
+            run.error_message
+        ],
+    )
+    .map_err(|e| format!("Insert error: {}", e))?;
+
+    Ok(())
+}
+
+/// Get performance test runs for a config
+pub fn get_performance_test_runs(config_id: &str) -> Result<Vec<PerformanceTestRun>, String> {
+    let conn = Connection::open(get_db_path())
+        .map_err(|e| format!("DB error: {}", e))?;
+
+    let mut stmt = conn.prepare(
+        "SELECT id, config_id, scenario_id, status, started_at, completed_at, duration_ms, max_vus_reached, metrics, threshold_results, error_message 
+         FROM performance_test_runs WHERE config_id = ? ORDER BY started_at DESC"
+    )
+    .map_err(|e| format!("Prepare error: {}", e))?;
+
+    let runs = stmt.query_map([config_id], |row| {
+        let status_str: String = row.get(3)?;
+        let metrics_json: String = row.get(8)?;
+        let threshold_results_json: String = row.get(9)?;
+
+        Ok(PerformanceTestRun {
+            id: row.get(0)?,
+            config_id: row.get(1)?,
+            scenario_id: row.get(2)?,
+            status: PerformanceRunStatus::from_str(&status_str),
+            started_at: row.get(4)?,
+            completed_at: row.get(5)?,
+            duration_ms: row.get(6)?,
+            max_vus_reached: row.get::<_, Option<u32>>(7)?.unwrap_or(0),
+            metrics: serde_json::from_str(&metrics_json).ok(),
+            threshold_results: serde_json::from_str(&threshold_results_json).unwrap_or_default(),
+            error_message: row.get(10)?,
+        })
+    })
+    .map_err(|e| format!("Query error: {}", e))?
+    .collect::<Result<Vec<_>, _>>()
+    .map_err(|e| format!("Collection error: {}", e))?;
+
+    Ok(runs)
+}
+
+/// Get a single performance test run by ID
+pub fn get_performance_test_run(run_id: &str) -> Result<Option<PerformanceTestRun>, String> {
+    let conn = Connection::open(get_db_path())
+        .map_err(|e| format!("DB error: {}", e))?;
+
+    let mut stmt = conn.prepare(
+        "SELECT id, config_id, scenario_id, status, started_at, completed_at, duration_ms, max_vus_reached, metrics, threshold_results, error_message 
+         FROM performance_test_runs WHERE id = ?"
+    )
+    .map_err(|e| format!("Prepare error: {}", e))?;
+
+    let run = stmt.query_row([run_id], |row| {
+        let status_str: String = row.get(3)?;
+        let metrics_json: String = row.get(8)?;
+        let threshold_results_json: String = row.get(9)?;
+
+        Ok(PerformanceTestRun {
+            id: row.get(0)?,
+            config_id: row.get(1)?,
+            scenario_id: row.get(2)?,
+            status: PerformanceRunStatus::from_str(&status_str),
+            started_at: row.get(4)?,
+            completed_at: row.get(5)?,
+            duration_ms: row.get(6)?,
+            max_vus_reached: row.get::<_, Option<u32>>(7)?.unwrap_or(0),
+            metrics: serde_json::from_str(&metrics_json).ok(),
+            threshold_results: serde_json::from_str(&threshold_results_json).unwrap_or_default(),
+            error_message: row.get(10)?,
+        })
+    });
+
+    match run {
+        Ok(r) => Ok(Some(r)),
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+        Err(e) => Err(format!("Query error: {}", e)),
+    }
 }

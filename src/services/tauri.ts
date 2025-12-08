@@ -14,6 +14,13 @@ import {
   ScenarioImportPreview,
   ProjectImportPreview,
 } from '../types/yaml';
+import {
+  PerformanceTestConfig,
+  PerformanceTestRun,
+  CreatePerformanceTestInput,
+  Stage,
+  Threshold,
+} from '../types/performance';
 
 export const tauriService = {
   async executeHttpRequest(request: APIRequest): Promise<APIResponse> {
@@ -270,5 +277,83 @@ export const tauriService = {
     yamlContent: string
   ): Promise<TestScenario> {
     return invoke('update_scenario_from_yaml', { scenarioId, yamlContent });
+  },
+
+  // ============================================================================
+  // Performance Testing APIs
+  // ============================================================================
+
+  /**
+   * Create a new performance test configuration
+   */
+  async createPerformanceTest(input: CreatePerformanceTestInput): Promise<PerformanceTestConfig> {
+    return invoke('create_performance_test', { input });
+  },
+
+  /**
+   * Get all performance test configs for a scenario
+   */
+  async getPerformanceTests(scenarioId: string): Promise<PerformanceTestConfig[]> {
+    return invoke('get_performance_tests', { scenarioId });
+  },
+
+  /**
+   * Get a single performance test config
+   */
+  async getPerformanceTest(configId: string): Promise<PerformanceTestConfig | null> {
+    return invoke('get_performance_test', { configId });
+  },
+
+  /**
+   * Update a performance test configuration
+   */
+  async updatePerformanceTest(
+    configId: string,
+    name?: string,
+    testType?: string,
+    vus?: number,
+    durationSecs?: number,
+    iterations?: number,
+    stages?: Stage[],
+    thresholds?: Threshold[]
+  ): Promise<PerformanceTestConfig> {
+    return invoke('update_performance_test', { 
+      configId, 
+      name, 
+      testType, 
+      vus, 
+      durationSecs, 
+      iterations, 
+      stages, 
+      thresholds 
+    });
+  },
+
+  /**
+   * Delete a performance test configuration
+   */
+  async deletePerformanceTest(configId: string): Promise<void> {
+    return invoke('delete_performance_test', { configId });
+  },
+
+  /**
+   * Run a performance test
+   */
+  async runPerformanceTest(configId: string): Promise<PerformanceTestRun> {
+    return invoke('run_performance_test', { configId });
+  },
+
+  /**
+   * Get performance test runs for a config
+   */
+  async getPerformanceTestRuns(configId: string): Promise<PerformanceTestRun[]> {
+    return invoke('get_performance_test_runs', { configId });
+  },
+
+  /**
+   * Get a single performance test run
+   */
+  async getPerformanceTestRun(runId: string): Promise<PerformanceTestRun | null> {
+    return invoke('get_performance_test_run', { runId });
   },
 };
