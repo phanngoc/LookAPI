@@ -38,12 +38,31 @@ async function bootstrap() {
   // Swagger documentation
   const config = new DocumentBuilder()
     .setTitle('Ecommerce API')
-    .setDescription('API documentation for Ecommerce application')
+    .setDescription('API documentation cho ứng dụng Ecommerce với đầy đủ các tính năng: Authentication, Products, Cart, và Orders')
     .setVersion('1.0')
-    .addBearerAuth()
+    .addTag('auth', 'Xác thực và quản lý người dùng')
+    .addTag('products', 'Quản lý sản phẩm và danh mục')
+    .addTag('cart', 'Quản lý giỏ hàng')
+    .addTag('orders', 'Quản lý đơn hàng')
+    .addBearerAuth(
+      {
+        type: 'http',
+        scheme: 'bearer',
+        bearerFormat: 'JWT',
+        name: 'JWT',
+        description: 'Nhập JWT token',
+        in: 'header',
+      },
+      'JWT-auth',
+    )
+    .addServer('http://localhost:3000', 'Development server')
     .build();
   const document = SwaggerModule.createDocument(app, config);
-  SwaggerModule.setup('api/docs', app, document);
+  SwaggerModule.setup('api/docs', app, document, {
+    swaggerOptions: {
+      persistAuthorization: true,
+    },
+  });
 
   const port = process.env.PORT || 3000;
   await app.listen(port);
