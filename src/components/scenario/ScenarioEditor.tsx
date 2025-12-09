@@ -15,6 +15,7 @@ import {
   Save,
   FileCode,
   Pencil,
+  Activity,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -39,6 +40,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { useTestScenario, useTestScenarioSteps } from '@/hooks/useTestScenarios';
 import { StepEditor } from './StepEditor';
 import { YamlEditor } from './YamlEditor';
+import { PerformanceTestPanel } from '@/components/performance';
 import { tauriService } from '@/services/tauri';
 import { useToast } from '@/hooks/use-toast';
 import {
@@ -75,7 +77,7 @@ const DEFAULT_CONFIGS: Record<TestStepType, any> = {
   loop: DEFAULT_LOOP_CONFIG,
 };
 
-type ViewMode = 'visual' | 'yaml';
+type ViewMode = 'visual' | 'yaml' | 'performance';
 
 export function ScenarioEditor({ scenario, onRunClick }: Props) {
   const [editingStep, setEditingStep] = useState<TestScenarioStep | null>(null);
@@ -282,6 +284,15 @@ export function ScenarioEditor({ scenario, onRunClick }: Props) {
                 <FileCode className="w-3 h-3 mr-1" />
                 YAML
               </Button>
+              <Button
+                variant={viewMode === 'performance' ? 'default' : 'ghost'}
+                size="sm"
+                className="h-7 px-2"
+                onClick={() => setViewMode('performance')}
+              >
+                <Activity className="w-3 h-3 mr-1" />
+                Performance
+              </Button>
             </div>
           </div>
           <div className="flex items-center gap-2">
@@ -351,7 +362,7 @@ export function ScenarioEditor({ scenario, onRunClick }: Props) {
         )}
       </div>
 
-      {/* Content Area - Visual or YAML Mode */}
+      {/* Content Area - Visual, YAML, or Performance Mode */}
       {viewMode === 'yaml' ? (
         <div className="flex-1">
           <YamlEditor
@@ -365,6 +376,10 @@ export function ScenarioEditor({ scenario, onRunClick }: Props) {
             projectId={scenario.projectId}
             scenarioId={scenario.id}
           />
+        </div>
+      ) : viewMode === 'performance' ? (
+        <div className="flex-1">
+          <PerformanceTestPanel scenarioId={scenario.id} />
         </div>
       ) : (
         /* Steps List - Visual Mode */
