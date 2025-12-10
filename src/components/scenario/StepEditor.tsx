@@ -1,10 +1,16 @@
 import { useState, useEffect } from 'react';
-import { X, Plus, Trash2, Save } from 'lucide-react';
+import { X, Plus, Trash2, Save, FileSpreadsheet, ChevronDown, ChevronUp } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Separator } from '@/components/ui/separator';
+import { Badge } from '@/components/ui/badge';
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from '@/components/ui/collapsible';
 import {
   Select,
   SelectContent,
@@ -39,6 +45,7 @@ export function StepEditor({ step, onClose, onSave, projectId }: Props) {
   const [config, setConfig] = useState<any>(step.config);
   const [isSaving, setIsSaving] = useState(false);
   const [endpointMode, setEndpointMode] = useState<'endpoint' | 'custom'>('endpoint');
+  const [csvSectionOpen, setCsvSectionOpen] = useState(false);
 
   const { endpoints, isLoading: endpointsLoading } = useEndpoints(projectId);
 
@@ -53,6 +60,10 @@ export function StepEditor({ step, onClose, onSave, projectId }: Props) {
         setEndpointMode('endpoint');
       } else {
         setEndpointMode('endpoint');
+      }
+      // Auto-open CSV section if CSV is already configured
+      if (requestConfig.withItemsFromCsv) {
+        setCsvSectionOpen(true);
       }
     }
   }, [step]);
@@ -270,6 +281,103 @@ export function StepEditor({ step, onClose, onSave, projectId }: Props) {
           />
         </div>
 
+        <Separator />
+
+        {/* CSV Data Source - Moved up */}
+        <Collapsible open={csvSectionOpen} onOpenChange={setCsvSectionOpen}>
+          <CollapsibleTrigger className="w-full">
+            <div className="flex items-center justify-between w-full p-2 rounded-lg border border-slate-200 hover:bg-slate-50 transition-colors">
+              <div className="flex items-center gap-2">
+                <FileSpreadsheet className="w-4 h-4 text-emerald-600" />
+                <label className="text-xs font-medium text-slate-600 cursor-pointer">
+                  CSV Data Source
+                </label>
+                {requestConfig.withItemsFromCsv && (
+                  <Badge variant="outline" className="text-xs bg-emerald-50 text-emerald-700 border-emerald-200">
+                    Enabled
+                  </Badge>
+                )}
+              </div>
+              {csvSectionOpen ? (
+                <ChevronUp className="w-4 h-4 text-slate-400" />
+              ) : (
+                <ChevronDown className="w-4 h-4 text-slate-400" />
+              )}
+            </div>
+          </CollapsibleTrigger>
+          <CollapsibleContent className="mt-2">
+            <div className="space-y-3">
+              {requestConfig.withItemsFromCsv ? (
+                <>
+                  <CsvUploader
+                    currentConfig={requestConfig.withItemsFromCsv}
+                    onCsvSelected={(csvConfig: CsvConfig) => {
+                      updateConfig({
+                        withItemsFromCsv: csvConfig,
+                      });
+                    }}
+                  />
+                  <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg">
+                    <p className="text-xs font-medium text-blue-900 mb-1">How to use CSV variables:</p>
+                    <ul className="text-xs text-blue-800 space-y-1 list-disc list-inside">
+                      <li>Use <code className="px-1 py-0.5 bg-blue-100 rounded">{'{{ item.columnName }}'}</code> in URL, headers, or body</li>
+                      <li>Use <code className="px-1 py-0.5 bg-blue-100 rounded">{'{{ index }}'}</code> for row index (0, 1, 2...)</li>
+                      <li>Step will run once for each CSV row</li>
+                    </ul>
+                  </div>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="w-full text-red-500 hover:text-red-600 hover:bg-red-50"
+                    onClick={() => updateConfig({ withItemsFromCsv: undefined })}
+                  >
+                    Remove CSV Data Source
+                  </Button>
+                </>
+              ) : (
+                <div className="space-y-3">
+                  <div className="text-center py-4 border border-dashed border-slate-300 rounded-lg">
+                    <FileSpreadsheet className="w-8 h-8 text-slate-400 mx-auto mb-2" />
+                    <p className="text-xs text-slate-600 mb-3">
+                      Use CSV data to run this request multiple times with different data
+                    </p>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        updateConfig({
+                          withItemsFromCsv: {
+                            fileName: '',
+                            quoteChar: '"',
+                            delimiter: ',',
+                          },
+                        });
+                        setCsvSectionOpen(true);
+                      }}
+                    >
+                      <Plus className="w-3 h-3 mr-1" />
+                      Add CSV Data Source
+                    </Button>
+                  </div>
+                  <div className="p-3 bg-slate-50 border border-slate-200 rounded-lg">
+                    <p className="text-xs font-medium text-slate-700 mb-1">Example CSV format:</p>
+                    <pre className="text-xs text-slate-600 font-mono bg-white p-2 rounded border border-slate-200 overflow-x-auto">
+{`email,name,password
+user1@test.com,User 1,pass123
+user2@test.com,User 2,pass456`}
+                    </pre>
+                    <p className="text-xs text-slate-500 mt-2">
+                      Then use <code className="px-1 py-0.5 bg-slate-200 rounded">{'{{ item.email }}'}</code> in your request body
+                    </p>
+                  </div>
+                </div>
+              )}
+            </div>
+          </CollapsibleContent>
+        </Collapsible>
+
+        <Separator />
+
         {/* Body */}
         {requestConfig.method !== 'GET' && (
           <div>
@@ -442,56 +550,6 @@ export function StepEditor({ step, onClose, onSave, projectId }: Props) {
           </div>
         </div>
 
-        <Separator />
-
-        {/* CSV Data Source */}
-        <div>
-          <div className="flex items-center justify-between mb-2">
-            <label className="text-xs font-medium text-slate-600">CSV Data Source</label>
-            {requestConfig.withItemsFromCsv && (
-              <Button
-                variant="ghost"
-                size="sm"
-                className="text-red-500"
-                onClick={() => updateConfig({ withItemsFromCsv: undefined })}
-              >
-                Remove CSV
-              </Button>
-            )}
-          </div>
-          {requestConfig.withItemsFromCsv ? (
-            <CsvUploader
-              currentConfig={requestConfig.withItemsFromCsv}
-              onCsvSelected={(csvConfig: CsvConfig) => {
-                updateConfig({
-                  withItemsFromCsv: csvConfig,
-                });
-              }}
-            />
-          ) : (
-            <div className="text-center py-4">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() =>
-                  updateConfig({
-                    withItemsFromCsv: {
-                      fileName: '',
-                      quoteChar: '"',
-                      delimiter: ',',
-                    },
-                  })
-                }
-              >
-                <Plus className="w-3 h-3 mr-1" />
-                Add CSV Data Source
-              </Button>
-              <p className="text-[10px] text-slate-400 mt-2">
-                Use CSV data to run this request multiple times with different data
-              </p>
-            </div>
-          )}
-        </div>
       </div>
     );
   };

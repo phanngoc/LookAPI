@@ -16,6 +16,7 @@ import {
   FileCode,
   Pencil,
   Activity,
+  FileSpreadsheet,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -36,6 +37,12 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from '@/components/ui/tooltip';
 import { useQueryClient } from '@tanstack/react-query';
 import { useTestScenario, useTestScenarioSteps } from '@/hooks/useTestScenarios';
 import { StepEditor } from './StepEditor';
@@ -53,6 +60,7 @@ import {
   DEFAULT_SCRIPT_CONFIG,
   DEFAULT_CONDITION_CONFIG,
   DEFAULT_LOOP_CONFIG,
+  RequestStepConfig,
 } from '@/types/scenario';
 import { cn } from '@/lib/utils';
 
@@ -432,15 +440,59 @@ export function ScenarioEditor({ scenario, onRunClick }: Props) {
                     </div>
 
                     <div className="flex-1 min-w-0">
-                      <div className="text-sm font-medium text-slate-900 truncate">
-                        {step.name}
+                      <div className="flex items-center gap-2">
+                        <div className="text-sm font-medium text-slate-900 truncate">
+                          {step.name}
+                        </div>
+                        {step.stepType === 'request' && 
+                         (step.config as RequestStepConfig)?.withItemsFromCsv && (
+                          <Badge variant="outline" className="text-xs bg-emerald-50 text-emerald-700 border-emerald-200">
+                            <FileSpreadsheet className="w-3 h-3 mr-1" />
+                            CSV
+                          </Badge>
+                        )}
                       </div>
-                      <div className="text-xs text-slate-500">
-                        {STEP_TYPE_LABELS[step.stepType]}
+                      <div className="flex items-center gap-2 mt-0.5">
+                        <div className="text-xs text-slate-500">
+                          {STEP_TYPE_LABELS[step.stepType]}
+                        </div>
+                        {(() => {
+                          const csvConfig = step.stepType === 'request' 
+                            ? (step.config as RequestStepConfig)?.withItemsFromCsv 
+                            : undefined;
+                          return csvConfig ? (
+                            <div className="text-xs text-slate-400 truncate max-w-[200px]">
+                              • {csvConfig.fileName.split('/').pop() || csvConfig.fileName}
+                            </div>
+                          ) : null;
+                        })()}
                       </div>
                     </div>
 
                     <div className="flex items-center gap-1.5 ml-2">
+                      {step.stepType === 'request' && !(step.config as RequestStepConfig)?.withItemsFromCsv && (
+                        <TooltipProvider>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-7 w-7"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setEditingStep(step);
+                                  // Focus will be handled by StepEditor when it opens
+                                }}
+                              >
+                                <FileSpreadsheet className="w-4 h-4 text-emerald-600" />
+                              </Button>
+                            </TooltipTrigger>
+                            <TooltipContent>
+                              <p>Add CSV Data Source</p>
+                            </TooltipContent>
+                          </Tooltip>
+                        </TooltipProvider>
+                      )}
                       <Button
                         variant="ghost"
                         size="icon"
