@@ -1,9 +1,9 @@
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Header } from '@/components/layout/Header';
 import { PrimaryNavigation, FeatureType } from '@/components/layout/PrimaryNavigation';
 import { Sidebar } from '@/components/layout/Sidebar';
-import { RequestBuilder } from '@/components/request/RequestBuilder';
+import { RequestTabManager } from '@/components/request/RequestTabManager';
 import { DatabaseQueryPanel } from '@/components/database/DatabaseQueryPanel';
 import { ScenarioPanel } from '@/components/scenario/ScenarioPanel';
 import { EnvironmentProvider } from '@/contexts/EnvironmentContext';
@@ -25,14 +25,14 @@ const queryClient = new QueryClient({
 
 function AppContent() {
   const [activeFeature, setActiveFeature] = useState<FeatureType | null>(null);
-  const [selectedEndpoint, setSelectedEndpoint] = useState<APIEndpoint | null>(null);
   const [selectedScenario, setSelectedScenario] = useState<TestScenario | null>(null);
+  const [activeEndpointId, setActiveEndpointId] = useState<string | null>(null);
   const { currentProject } = useProject();
+  const openTabRef = useRef<((endpoint: APIEndpoint | null) => void) | null>(null);
 
   const handleSelectFeature = (feature: FeatureType) => {
     setActiveFeature(feature);
     // Reset selections when switching features
-    setSelectedEndpoint(null);
     setSelectedScenario(null);
   };
 
@@ -41,7 +41,13 @@ function AppContent() {
     if (activeFeature !== 'api') {
       setActiveFeature('api');
     }
-    setSelectedEndpoint(endpoint);
+    // Open tab via RequestTabManager
+    if (openTabRef.current) {
+      openTabRef.current(endpoint);
+    } else {
+      // Fallback: store in window temporarily
+      (window as any).__pendingEndpoint = endpoint;
+    }
   };
 
   const handleSelectScenario = (scenario: TestScenario | null) => {
@@ -63,7 +69,7 @@ function AppContent() {
             featureMode={activeFeature}
             onSelectEndpoint={handleSelectEndpoint}
             onSelectScenario={handleSelectScenario}
-            selectedEndpointId={selectedEndpoint?.id}
+            selectedEndpointId={activeEndpointId}
             selectedScenario={selectedScenario}
             projectId={currentProject?.id}
           />
@@ -83,18 +89,18 @@ function AppContent() {
             </div>
           )}
 
-          {activeFeature === 'api' && selectedEndpoint && (
-            <RequestBuilder endpoint={selectedEndpoint} />
-          )}
-
-          {activeFeature === 'api' && !selectedEndpoint && (
-            <div className="h-full flex items-center justify-center bg-slate-50">
-              <div className="text-center">
-                <p className="text-slate-500">
-                  Select an API endpoint from the sidebar to start testing
-                </p>
-              </div>
-            </div>
+          {activeFeature === 'api' && (
+            <RequestTabManager
+              onOpenEndpoint={(openTab) => {
+                openTabRef.current = openTab;
+                // Handle any pending endpoint
+                if ((window as any).__pendingEndpoint) {
+                  openTab((window as any).__pendingEndpoint);
+                  delete (window as any).__pendingEndpoint;
+                }
+              }}
+              onActiveEndpointChange={setActiveEndpointId}
+            />
           )}
 
           {activeFeature === 'database' && <DatabaseQueryPanel />}

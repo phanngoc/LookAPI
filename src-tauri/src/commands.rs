@@ -1018,3 +1018,41 @@ pub async fn get_performance_test_run(
 ) -> Result<Option<PerformanceTestRun>, String> {
     database::get_performance_test_run(&run_id)
 }
+
+// Request tabs commands
+#[tauri::command]
+pub async fn save_request_tabs(
+    project_id: String,
+    tabs: Vec<RequestTab>,
+) -> Result<(), String> {
+    database::save_request_tabs(&project_id, tabs)
+}
+
+#[tauri::command]
+pub async fn get_request_tabs(
+    project_id: String,
+) -> Result<Vec<RequestTab>, String> {
+    database::get_request_tabs(&project_id)
+}
+
+#[tauri::command]
+pub async fn save_request_tab_state(
+    project_id: String,
+    active_tab_id: Option<String>,
+) -> Result<(), String> {
+    database::save_request_tab_state(&project_id, active_tab_id)
+}
+
+#[tauri::command]
+pub async fn get_request_tab_state(
+    project_id: String,
+) -> Result<Option<String>, String> {
+    database::get_request_tab_state(&project_id)
+}
+
+#[tauri::command]
+pub async fn delete_request_tab(
+    tab_id: String,
+) -> Result<(), String> {
+    database::delete_request_tab(&tab_id)
+}

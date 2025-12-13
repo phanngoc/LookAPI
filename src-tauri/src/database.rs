@@ -213,6 +213,38 @@ pub fn init_database() -> Result<()> {
         [],
     )?;
 
+    // Request tabs table
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS request_tabs (
+            id TEXT PRIMARY KEY,
+            project_id TEXT NOT NULL,
+            endpoint_id TEXT,
+            endpoint_json TEXT,
+            method TEXT NOT NULL,
+            url TEXT NOT NULL,
+            body_json TEXT NOT NULL DEFAULT '{}',
+            headers_json TEXT NOT NULL DEFAULT '{}',
+            active_tab TEXT DEFAULT 'body',
+            name TEXT NOT NULL,
+            tab_order INTEGER NOT NULL DEFAULT 0,
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL,
+            FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+        )",
+        [],
+    )?;
+
+    // Request tab state table
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS request_tab_state (
+            project_id TEXT PRIMARY KEY,
+            active_tab_id TEXT,
+            FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+            FOREIGN KEY (active_tab_id) REFERENCES request_tabs(id) ON DELETE SET NULL
+        )",
+        [],
+    )?;
+
     Ok(())
 }
 
@@ -1379,4 +1411,261 @@ pub fn get_performance_test_run(run_id: &str) -> Result<Option<PerformanceTestRu
         Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
         Err(e) => Err(format!("Query error: {}", e)),
     }
+}
+
+// Request tabs functions
+pub fn save_request_tabs(project_id: &str, tabs: Vec<crate::types::RequestTab>) -> Result<(), String> {
+    let mut conn = Connection::open(get_db_path())
+        .map_err(|e| format!("DB error: {}", e))?;
+
+    // Validate project exists
+    let project_exists: bool = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM projects WHERE id = ?)",
+        rusqlite::params![project_id],
+        |row| row.get(0)
+    )
+    .map_err(|e| format!("Query error: {}", e))?;
+
+    if !project_exists {
+        return Err(format!("Project with id '{}' does not exist", project_id));
+    }
+
+    // Start transaction
+    let tx = conn.transaction()
+        .map_err(|e| format!("Transaction error: {}", e))?;
+
+    // Collect tab IDs for deletion check
+    let tab_ids: Vec<String> = tabs.iter().map(|t| t.id.clone()).collect();
+
+    // For each tab: UPDATE if exists, INSERT if not
+    for (index, tab) in tabs.iter().enumerate() {
+        let endpoint_id = tab.endpoint.as_ref().map(|e| e.id.clone());
+        let endpoint_json = serde_json::to_string(&tab.endpoint)
+            .map_err(|e| format!("Serialization error: {}", e))?;
+
+        // Check if tab exists
+        let tab_exists: bool = tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM request_tabs WHERE id = ? AND project_id = ?)",
+            rusqlite::params![tab.id, project_id],
+            |row| row.get(0)
+        )
+        .map_err(|e| format!("Query error: {}", e))?;
+
+        if tab_exists {
+            // UPDATE existing tab
+            tx.execute(
+                "UPDATE request_tabs SET
+                 endpoint_id = ?, endpoint_json = ?, method = ?, url = ?, body_json = ?,
+                 headers_json = ?, active_tab = ?, name = ?, tab_order = ?, updated_at = ?
+                 WHERE id = ? AND project_id = ?",
+                rusqlite::params![
+                    endpoint_id,
+                    endpoint_json,
+                    tab.method,
+                    tab.url,
+                    tab.body_json,
+                    tab.headers_json,
+                    tab.active_tab,
+                    tab.name,
+                    index as i32,
+                    tab.updated_at,
+                    tab.id,
+                    project_id
+                ],
+            )
+            .map_err(|e| format!("Update error: {}", e))?;
+        } else {
+            // INSERT new tab
+            tx.execute(
+                "INSERT INTO request_tabs 
+                (id, project_id, endpoint_id, endpoint_json, method, url, body_json, headers_json, active_tab, name, tab_order, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                rusqlite::params![
+                    tab.id,
+                    project_id,
+                    endpoint_id,
+                    endpoint_json,
+                    tab.method,
+                    tab.url,
+                    tab.body_json,
+                    tab.headers_json,
+                    tab.active_tab,
+                    tab.name,
+                    index as i32,
+                    tab.created_at,
+                    tab.updated_at
+                ],
+            )
+            .map_err(|e| format!("Insert error: {}", e))?;
+        }
+    }
+
+    // Delete tabs that are no longer in the list
+    if !tab_ids.is_empty() {
+        // Get all existing tab IDs for this project
+        let existing_ids: Vec<String> = tx.prepare(
+            "SELECT id FROM request_tabs WHERE project_id = ?"
+        )
+        .and_then(|mut stmt| {
+            let rows = stmt.query_map([project_id], |row| {
+                Ok(row.get::<_, String>(0)?)
+            })?;
+            let mut ids = Vec::new();
+            for row in rows {
+                ids.push(row?);
+            }
+            Ok(ids)
+        })
+        .map_err(|e| format!("Query error: {}", e))?;
+
+        // Find IDs to delete (exist in DB but not in new list)
+        for existing_id in existing_ids {
+            if !tab_ids.contains(&existing_id) {
+                tx.execute(
+                    "DELETE FROM request_tabs WHERE id = ? AND project_id = ?",
+                    rusqlite::params![existing_id, project_id],
+                )
+                .map_err(|e| format!("Delete error: {}", e))?;
+            }
+        }
+    } else {
+        // If no tabs, delete all tabs for this project
+        tx.execute(
+            "DELETE FROM request_tabs WHERE project_id = ?",
+            rusqlite::params![project_id],
+        )
+        .map_err(|e| format!("Delete error: {}", e))?;
+    }
+
+    tx.commit()
+        .map_err(|e| format!("Commit error: {}", e))?;
+
+    Ok(())
+}
+
+pub fn get_request_tabs(project_id: &str) -> Result<Vec<crate::types::RequestTab>, String> {
+    let conn = Connection::open(get_db_path())
+        .map_err(|e| format!("DB error: {}", e))?;
+
+    let mut stmt = conn.prepare(
+        "SELECT id, endpoint_id, endpoint_json, method, url, body_json, headers_json, active_tab, name, tab_order, created_at, updated_at 
+         FROM request_tabs WHERE project_id = ? ORDER BY tab_order ASC"
+    )
+    .map_err(|e| format!("Prepare error: {}", e))?;
+
+    let tabs = stmt.query_map([project_id], |row| {
+        let endpoint_json: String = row.get(2)?;
+        let endpoint: Option<crate::types::ApiEndpoint> = 
+            serde_json::from_str(&endpoint_json).ok();
+
+        Ok(crate::types::RequestTab {
+            id: row.get(0)?,
+            endpoint,
+            method: row.get(3)?,
+            url: row.get(4)?,
+            body_json: row.get(5)?,
+            headers_json: row.get(6)?,
+            response: None, // Runtime state
+            error: None, // Runtime state
+            is_executing: None, // Runtime state
+            active_tab: row.get(7)?,
+            name: row.get(8)?,
+            created_at: row.get(10)?,
+            updated_at: row.get(11)?,
+            curl_command: None, // Runtime state
+        })
+    })
+    .map_err(|e| format!("Query error: {}", e))?
+    .collect::<Result<Vec<_>, _>>()
+    .map_err(|e| format!("Collection error: {}", e))?;
+
+    Ok(tabs)
+}
+
+pub fn save_request_tab_state(project_id: &str, active_tab_id: Option<String>) -> Result<(), String> {
+    let conn = Connection::open(get_db_path())
+        .map_err(|e| format!("DB error: {}", e))?;
+
+    // Validate project exists
+    let project_exists: bool = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM projects WHERE id = ?)",
+        rusqlite::params![project_id],
+        |row| row.get(0)
+    )
+    .map_err(|e| format!("Query error: {}", e))?;
+
+    if !project_exists {
+        return Err(format!("Project with id '{}' does not exist", project_id));
+    }
+
+    conn.execute(
+        "INSERT OR REPLACE INTO request_tab_state (project_id, active_tab_id)
+         VALUES (?, ?)",
+        rusqlite::params![project_id, active_tab_id],
+    )
+    .map_err(|e| format!("Insert error: {}", e))?;
+
+    Ok(())
+}
+
+pub fn get_request_tab_state(project_id: &str) -> Result<Option<String>, String> {
+    let conn = Connection::open(get_db_path())
+        .map_err(|e| format!("DB error: {}", e))?;
+
+    let mut stmt = conn.prepare(
+        "SELECT active_tab_id FROM request_tab_state WHERE project_id = ?"
+    )
+    .map_err(|e| format!("Prepare error: {}", e))?;
+
+    let result = stmt.query_row([project_id], |row| {
+        Ok(row.get::<_, Option<String>>(0)?)
+    });
+
+    match result {
+        Ok(Some(id)) => Ok(Some(id)),
+        Ok(None) => Ok(None),
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+        Err(e) => Err(format!("Query error: {}", e)),
+    }
+}
+
+pub fn delete_request_tab(tab_id: &str) -> Result<(), String> {
+    let conn = Connection::open(get_db_path())
+        .map_err(|e| format!("DB error: {}", e))?;
+
+    conn.execute(
+        "DELETE FROM request_tabs WHERE id = ?",
+        rusqlite::params![tab_id],
+    )
+    .map_err(|e| format!("Delete error: {}", e))?;
+
+    // Also clear active_tab_id in state if it was this tab
+    conn.execute(
+        "UPDATE request_tab_state SET active_tab_id = NULL WHERE active_tab_id = ?",
+        rusqlite::params![tab_id],
+    )
+    .ok(); // Ignore errors here
+
+    Ok(())
+}
+
+pub fn update_request_tab_order(project_id: &str, tab_orders: Vec<(String, i32)>) -> Result<(), String> {
+    let mut conn = Connection::open(get_db_path())
+        .map_err(|e| format!("DB error: {}", e))?;
+
+    let tx = conn.transaction()
+        .map_err(|e| format!("Transaction error: {}", e))?;
+
+    for (tab_id, order) in tab_orders {
+        tx.execute(
+            "UPDATE request_tabs SET tab_order = ? WHERE id = ? AND project_id = ?",
+            rusqlite::params![order, tab_id, project_id],
+        )
+        .map_err(|e| format!("Update error: {}", e))?;
+    }
+
+    tx.commit()
+        .map_err(|e| format!("Commit error: {}", e))?;
+
+    Ok(())
 }

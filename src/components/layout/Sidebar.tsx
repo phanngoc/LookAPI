@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import {
   Search,
   FolderOpen,
@@ -46,7 +46,7 @@ export function Sidebar({
   const { endpoints, isLoading: endpointsLoading } = useEndpoints(currentProject?.id);
   const [searchQuery, setSearchQuery] = useState('');
   const [expandedCategories, setExpandedCategories] = useState<Set<string>>(
-    new Set(['API Endpoints'])
+    new Set()
   );
 
   // Group endpoints by category
@@ -83,6 +83,20 @@ export function Sidebar({
     filteredEndpoints.forEach((ep) => matchingCategories.add(ep.category));
     return Array.from(matchingCategories);
   }, [searchQuery, endpointsByCategory, filteredEndpoints]);
+
+  // Auto-expand first category when categories are loaded
+  useEffect(() => {
+    // Chỉ tự động mở rộng khi không có search query
+    if (!searchQuery.trim() && filteredCategories.length > 0) {
+      const firstCategory = filteredCategories[0];
+      setExpandedCategories(prev => {
+        if (!prev.has(firstCategory)) {
+          return new Set([...prev, firstCategory]);
+        }
+        return prev;
+      });
+    }
+  }, [filteredCategories, searchQuery]);
 
   const toggleCategory = (category: string) => {
     const newExpanded = new Set(expandedCategories);

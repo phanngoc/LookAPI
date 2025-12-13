@@ -1,6 +1,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { APIEndpoint, APIRequest, APIResponse, TestSuite, QueryResult, Project } from '../types/api';
 import { SecurityTestCase, SecurityTestRun, ScanConfig } from '../types/security';
+import { RequestTab } from '../types/requestTab';
 import {
   TestScenario,
   TestScenarioStep,
@@ -355,5 +356,44 @@ export const tauriService = {
    */
   async getPerformanceTestRun(runId: string): Promise<PerformanceTestRun | null> {
     return invoke('get_performance_test_run', { runId });
+  },
+
+  // ============================================================================
+  // Request Tabs APIs
+  // ============================================================================
+
+  /**
+   * Save request tabs for a project
+   */
+  async saveRequestTabs(projectId: string, tabs: RequestTab[]): Promise<void> {
+    return invoke('save_request_tabs', { projectId, tabs });
+  },
+
+  /**
+   * Get request tabs for a project
+   */
+  async getRequestTabs(projectId: string): Promise<RequestTab[]> {
+    return invoke('get_request_tabs', { projectId });
+  },
+
+  /**
+   * Save request tab state (active tab) for a project
+   */
+  async saveRequestTabState(projectId: string, activeTabId: string | null): Promise<void> {
+    return invoke('save_request_tab_state', { projectId, activeTabId });
+  },
+
+  /**
+   * Get request tab state (active tab) for a project
+   */
+  async getRequestTabState(projectId: string): Promise<string | null> {
+    return invoke('get_request_tab_state', { projectId });
+  },
+
+  /**
+   * Delete a request tab
+   */
+  async deleteRequestTab(tabId: string): Promise<void> {
+    return invoke('delete_request_tab', { tabId });
   },
 };

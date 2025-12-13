@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useCallback } from 'react';
 import { RotateCcw, FileJson, Code2, Settings2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -14,81 +14,59 @@ import { UrlBar } from './UrlBar';
 import { CodeEditor } from '@/components/shared/CodeEditor';
 import { ResponseViewer } from '@/components/response/ResponseViewer';
 import { ResponseSchemaViewer } from './ResponseSchemaViewer';
-import { APIEndpoint, APIResponse } from '@/types/api';
+import { RequestTab } from '@/types/requestTab';
 import { tauriService } from '@/services/tauri';
 import { useEnvironment } from '@/contexts/EnvironmentContext';
-import { useProject } from '@/contexts/ProjectContext';
 import { toast } from '@/hooks/use-toast';
 import {
   ResizablePanelGroup,
   ResizablePanel,
   ResizableHandle,
 } from '@/components/ui/resizable';
-import { getBaseUrlForProject, buildFullUrl } from '@/utils/url';
 
 interface RequestBuilderProps {
-  endpoint: APIEndpoint;
+  tab: RequestTab;
+  onUpdate: (tabId: string, updates: Partial<RequestTab>) => void;
 }
 
-export function RequestBuilder({ endpoint }: RequestBuilderProps) {
-  const { resolveVariables, activeEnvironment, getVariable } = useEnvironment();
-  const { currentProject } = useProject();
-  const [method, setMethod] = useState<string>(endpoint.method);
-  const [url, setUrl] = useState('');
-  const [bodyJson, setBodyJson] = useState('');
-  const [headersJson, setHeadersJson] = useState('{\n  "Content-Type": "application/json"\n}');
-  const [isExecuting, setIsExecuting] = useState(false);
-  const [response, setResponse] = useState<APIResponse | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [curlCommand, setCurlCommand] = useState('');
-  const [activeTab, setActiveTab] = useState('body');
+export function RequestBuilder({ tab, onUpdate }: RequestBuilderProps) {
+  const { resolveVariables, activeEnvironment } = useEnvironment();
 
-  // Initialize from endpoint
-  useEffect(() => {
-    if (endpoint) {
-      setMethod(endpoint.method);
-      
-      // Build URL from project settings or environment
-      const envBaseUrl = getVariable('BASE_URL');
-      const baseUrl = getBaseUrlForProject(currentProject, envBaseUrl, endpoint.service);
-      setUrl(buildFullUrl(baseUrl, endpoint.path));
-
-      // Build body from parameters
-      const params = endpoint.parameters.reduce((acc, param) => {
-        acc[param.name] = param.defaultValue ?? param.example ?? '';
-        return acc;
-      }, {} as Record<string, unknown>);
-
-      setBodyJson(JSON.stringify(params, null, 2));
-      setResponse(null);
-      setError(null);
-      setCurlCommand('');
-    }
-  }, [endpoint, currentProject, getVariable]);
+  const updateTab = useCallback(
+    (updates: Partial<RequestTab>) => {
+      onUpdate(tab.id, updates);
+    },
+    [tab.id, onUpdate]
+  );
 
   const handleReset = () => {
-    const params = endpoint.parameters.reduce((acc, param) => {
+    if (!tab.endpoint) return;
+    
+    const params = tab.endpoint.parameters.reduce((acc, param) => {
       acc[param.name] = param.defaultValue ?? param.example ?? '';
       return acc;
     }, {} as Record<string, unknown>);
 
-    setBodyJson(JSON.stringify(params, null, 2));
-    setError(null);
+    updateTab({
+      bodyJson: JSON.stringify(params, null, 2),
+      error: null,
+    });
   };
 
   const handleExecute = async () => {
-    setIsExecuting(true);
-    setError(null);
+    updateTab({ isExecuting: true, error: null });
 
     try {
       // Parse body
       let parameters = {};
-      if (bodyJson.trim()) {
+      if (tab.bodyJson.trim()) {
         try {
-          parameters = JSON.parse(bodyJson);
+          parameters = JSON.parse(tab.bodyJson);
         } catch {
-          setError('Invalid JSON in request body');
-          setIsExecuting(false);
+          updateTab({
+            error: 'Invalid JSON in request body',
+            isExecuting: false,
+          });
           return;
         }
       }
@@ -96,27 +74,32 @@ export function RequestBuilder({ endpoint }: RequestBuilderProps) {
       // Parse headers
       let headers: Record<string, string> = { 'Content-Type': 'application/json' };
       try {
-        headers = JSON.parse(headersJson);
+        headers = JSON.parse(tab.headersJson);
       } catch {
         // Use default headers
       }
 
       // Resolve environment variables in URL
-      const resolvedUrl = resolveVariables(url);
+      const resolvedUrl = resolveVariables(tab.url);
 
       const request = {
         endpoint: resolvedUrl,
-        method,
+        method: tab.method,
         parameters,
         headers,
       };
 
       const result = await tauriService.executeHttpRequest(request);
-      setResponse(result);
 
       // Generate curl command
-      const curl = await tauriService.generateCurlCommand(resolvedUrl, method, parameters);
-      setCurlCommand(curl);
+      const curl = await tauriService.generateCurlCommand(resolvedUrl, tab.method, parameters);
+
+      updateTab({
+        response: result,
+        curlCommand: curl,
+        isExecuting: false,
+        error: null,
+      });
 
       toast({
         title: 'Request completed',
@@ -125,20 +108,21 @@ export function RequestBuilder({ endpoint }: RequestBuilderProps) {
       });
     } catch (err: unknown) {
       const errorMessage = err instanceof Error ? err.message : String(err);
-      setError(errorMessage || 'Request failed');
+      updateTab({
+        error: errorMessage || 'Request failed',
+        isExecuting: false,
+      });
       toast({
         title: 'Request failed',
         description: errorMessage,
         variant: 'destructive',
       });
-    } finally {
-      setIsExecuting(false);
     }
   };
 
   const handleCopyCurl = () => {
-    if (curlCommand) {
-      navigator.clipboard.writeText(curlCommand);
+    if (tab.curlCommand) {
+      navigator.clipboard.writeText(tab.curlCommand);
       toast({
         title: 'Copied!',
         description: 'cURL command copied to clipboard',
@@ -147,9 +131,10 @@ export function RequestBuilder({ endpoint }: RequestBuilderProps) {
   };
 
   const handleDownloadResponse = async () => {
-    if (response) {
-      const filename = `response_${endpoint.name}_${Date.now()}.json`;
-      const content = JSON.stringify(response.data, null, 2);
+    if (tab.response) {
+      const endpointName = tab.endpoint?.name || 'response';
+      const filename = `response_${endpointName}_${Date.now()}.json`;
+      const content = JSON.stringify(tab.response.data, null, 2);
 
       try {
         await tauriService.exportResponse(filename, content);
@@ -168,38 +153,42 @@ export function RequestBuilder({ endpoint }: RequestBuilderProps) {
     }
   };
 
+  const endpoint = tab.endpoint;
+
   return (
     <div className="flex flex-col h-full bg-slate-50">
       {/* Endpoint Info */}
-      <div className="px-4 pt-4 pb-2 bg-white border-b border-slate-200">
-        <div className="flex items-center justify-between">
-          <div>
-            <h2 className="text-lg font-semibold text-slate-900">{endpoint.name}</h2>
-            {endpoint.description && (
-              <p className="text-sm text-slate-500 mt-0.5">{endpoint.description}</p>
+      {endpoint && (
+        <div className="px-4 pt-4 pb-2 bg-white border-b border-slate-200">
+          <div className="flex items-center justify-between">
+            <div>
+              <h2 className="text-lg font-semibold text-slate-900">{endpoint.name}</h2>
+              {endpoint.description && (
+                <p className="text-sm text-slate-500 mt-0.5">{endpoint.description}</p>
+              )}
+            </div>
+            {activeEnvironment && (
+              <div className="flex items-center gap-2 text-xs text-slate-500">
+                <div
+                  className="w-2 h-2 rounded-full"
+                  style={{ backgroundColor: activeEnvironment.color }}
+                />
+                <span>{activeEnvironment.name}</span>
+              </div>
             )}
           </div>
-          {activeEnvironment && (
-            <div className="flex items-center gap-2 text-xs text-slate-500">
-              <div
-                className="w-2 h-2 rounded-full"
-                style={{ backgroundColor: activeEnvironment.color }}
-              />
-              <span>{activeEnvironment.name}</span>
-            </div>
-          )}
         </div>
-      </div>
+      )}
 
       {/* URL Bar */}
       <UrlBar
-        method={method}
-        url={url}
-        onMethodChange={setMethod}
-        onUrlChange={setUrl}
+        method={tab.method}
+        url={tab.url}
+        onMethodChange={(method) => updateTab({ method })}
+        onUrlChange={(url) => updateTab({ url })}
         onExecute={handleExecute}
-        isExecuting={isExecuting}
-        disabled={!!error}
+        isExecuting={tab.isExecuting}
+        disabled={!!tab.error}
       />
 
       {/* Request/Response Split */}
@@ -208,7 +197,11 @@ export function RequestBuilder({ endpoint }: RequestBuilderProps) {
         <ResizablePanel defaultSize={50} minSize={30}>
           <div className="h-full flex flex-col bg-white border-r border-slate-200">
             {/* Request Tabs */}
-            <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-1 flex flex-col">
+            <Tabs
+              value={tab.activeTab}
+              onValueChange={(value) => updateTab({ activeTab: value as 'body' | 'headers' | 'response-schema' })}
+              className="flex-1 flex flex-col"
+            >
               <div className="flex items-center justify-between px-4 py-2 border-b border-slate-200">
                 <TabsList className="h-8">
                   <TabsTrigger value="body" className="text-xs gap-1.5">
@@ -219,15 +212,17 @@ export function RequestBuilder({ endpoint }: RequestBuilderProps) {
                     <Settings2 className="w-3.5 h-3.5" />
                     Headers
                   </TabsTrigger>
-                  <TabsTrigger value="response-schema" className="text-xs gap-1.5">
-                    <FileJson className="w-3.5 h-3.5" />
-                    Response Schema
-                    {endpoint.responses && endpoint.responses.length > 0 && (
-                      <Badge variant="secondary" className="text-[10px] px-1 py-0 ml-1">
-                        {endpoint.responses.length}
-                      </Badge>
-                    )}
-                  </TabsTrigger>
+                  {endpoint && (
+                    <TabsTrigger value="response-schema" className="text-xs gap-1.5">
+                      <FileJson className="w-3.5 h-3.5" />
+                      Response Schema
+                      {endpoint.responses && endpoint.responses.length > 0 && (
+                        <Badge variant="secondary" className="text-[10px] px-1 py-0 ml-1">
+                          {endpoint.responses.length}
+                        </Badge>
+                      )}
+                    </TabsTrigger>
+                  )}
                 </TabsList>
 
                 <TooltipProvider>
@@ -246,7 +241,7 @@ export function RequestBuilder({ endpoint }: RequestBuilderProps) {
                       <TooltipContent>Reset to defaults</TooltipContent>
                     </Tooltip>
 
-                    {curlCommand && (
+                    {tab.curlCommand && (
                       <Tooltip>
                         <TooltipTrigger asChild>
                           <Button
@@ -268,16 +263,16 @@ export function RequestBuilder({ endpoint }: RequestBuilderProps) {
               <TabsContent value="body" className="flex-1 m-0 p-0">
                 <div className="h-full p-4">
                   <CodeEditor
-                    value={bodyJson}
-                    onChange={setBodyJson}
+                    value={tab.bodyJson}
+                    onChange={(value) => updateTab({ bodyJson: value })}
                     language="json"
                     height="100%"
                     className="h-full"
                   />
                 </div>
-                {error && (
+                {tab.error && (
                   <div className="mx-4 mb-4 p-3 bg-red-50 border border-red-200 rounded-lg">
-                    <p className="text-sm text-red-600">{error}</p>
+                    <p className="text-sm text-red-600">{tab.error}</p>
                   </div>
                 )}
               </TabsContent>
@@ -285,8 +280,8 @@ export function RequestBuilder({ endpoint }: RequestBuilderProps) {
               <TabsContent value="headers" className="flex-1 m-0 p-0">
                 <div className="h-full p-4">
                   <CodeEditor
-                    value={headersJson}
-                    onChange={setHeadersJson}
+                    value={tab.headersJson}
+                    onChange={(value) => updateTab({ headersJson: value })}
                     language="json"
                     height="100%"
                     className="h-full"
@@ -294,9 +289,11 @@ export function RequestBuilder({ endpoint }: RequestBuilderProps) {
                 </div>
               </TabsContent>
 
-              <TabsContent value="response-schema" className="flex-1 m-0 p-0 overflow-auto">
-                <ResponseSchemaViewer responses={endpoint.responses} />
-              </TabsContent>
+              {endpoint && (
+                <TabsContent value="response-schema" className="flex-1 m-0 p-0 overflow-auto">
+                  <ResponseSchemaViewer responses={endpoint.responses} />
+                </TabsContent>
+              )}
             </Tabs>
           </div>
         </ResizablePanel>
@@ -305,8 +302,8 @@ export function RequestBuilder({ endpoint }: RequestBuilderProps) {
 
         {/* Response Panel */}
         <ResizablePanel defaultSize={50} minSize={30}>
-          {response ? (
-            <ResponseViewer response={response} onDownload={handleDownloadResponse} />
+          {tab.response ? (
+            <ResponseViewer response={tab.response} onDownload={handleDownloadResponse} />
           ) : (
             <div className="h-full flex items-center justify-center bg-slate-50">
               <Card className="w-80 text-center border-dashed">

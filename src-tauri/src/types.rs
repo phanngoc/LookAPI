@@ -61,7 +61,7 @@ pub struct ApiRequest {
     pub headers: Option<std::collections::HashMap<String, String>>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ApiResponse {
     pub status: u16,
     #[serde(rename = "statusText")]
@@ -104,4 +104,39 @@ pub struct YamlFile {
 pub struct GenerateYamlWithAIResponse {
     pub yaml: String,
     pub scenario: Option<crate::scenario::types::TestScenario>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct RequestTab {
+    pub id: String,
+    #[serde(rename = "endpoint")]
+    pub endpoint: Option<ApiEndpoint>, // null for empty/custom requests
+    pub method: String,
+    pub url: String,
+    #[serde(rename = "bodyJson")]
+    pub body_json: String,
+    #[serde(rename = "headersJson")]
+    pub headers_json: String,
+    #[serde(rename = "response", skip_serializing_if = "Option::is_none")]
+    pub response: Option<ApiResponse>, // Runtime state, not persisted
+    #[serde(rename = "error", skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>, // Runtime state, not persisted
+    #[serde(rename = "isExecuting", skip_serializing_if = "Option::is_none")]
+    pub is_executing: Option<bool>, // Runtime state, not persisted
+    #[serde(rename = "activeTab")]
+    pub active_tab: String, // 'body' | 'headers' | 'response-schema'
+    pub name: String,
+    #[serde(rename = "createdAt")]
+    pub created_at: i64,
+    #[serde(rename = "updatedAt")]
+    pub updated_at: i64,
+    #[serde(rename = "curlCommand", skip_serializing_if = "Option::is_none")]
+    pub curl_command: Option<String>, // Runtime state, not persisted
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct RequestTabState {
+    pub tabs: Vec<RequestTab>,
+    #[serde(rename = "activeTabId")]
+    pub active_tab_id: Option<String>,
 }

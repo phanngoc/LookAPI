@@ -89,6 +89,12 @@ pub fn run() {
             commands::run_performance_test,
             commands::get_performance_test_runs,
             commands::get_performance_test_run,
+            // Request tabs commands
+            commands::save_request_tabs,
+            commands::get_request_tabs,
+            commands::save_request_tab_state,
+            commands::get_request_tab_state,
+            commands::delete_request_tab,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
