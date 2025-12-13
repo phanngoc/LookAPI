@@ -319,7 +319,7 @@ const useRequestTabsStoreBase = create<RequestTabsStore>()(
 
     // Close a tab
     closeTab: (tabId: string) => {
-      const { tabs, activeTabId, saveTimeouts } = get();
+      const { tabs, activeTabId, saveTimeouts, projectId } = get();
       const newTabs = tabs.filter((t) => t.id !== tabId);
       
       // Cleanup timeout for closed tab
@@ -343,6 +343,13 @@ const useRequestTabsStoreBase = create<RequestTabsStore>()(
       }
 
       set({ tabs: newTabs, activeTabId: newActiveTabId });
+
+      // Delete tab from database
+      if (projectId) {
+        tauriService.deleteRequestTab(tabId).catch((err) => {
+          console.error('Failed to delete tab from database:', err);
+        });
+      }
     },
 
     // Update a tab with debouncing (internal)
