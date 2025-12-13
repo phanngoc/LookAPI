@@ -588,7 +588,9 @@ export function ScenarioEditor({ scenario, onRunClick }: Props) {
 
           {/* Step Editor Panel */}
           {editingStep && (
-            <div className="w-[500px] h-full bg-slate-50">
+            <div 
+              className="w-[500px] h-full bg-slate-50 overflow-hidden flex flex-col"
+            >
               <StepEditor
                 step={editingStep}
                 onClose={() => setEditingStep(null)}

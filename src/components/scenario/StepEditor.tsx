@@ -1,9 +1,8 @@
-import { useState, useEffect } from 'react';
+import React, { useState, useEffect, useLayoutEffect } from 'react';
 import { X, Plus, Trash2, Save, FileSpreadsheet, ChevronDown, ChevronUp } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
-import { ScrollArea } from '@/components/ui/scroll-area';
 import { Separator } from '@/components/ui/separator';
 import { Badge } from '@/components/ui/badge';
 import {
@@ -46,6 +45,12 @@ export function StepEditor({ step, onClose, onSave, projectId }: Props) {
   const [isSaving, setIsSaving] = useState(false);
   const [endpointMode, setEndpointMode] = useState<'endpoint' | 'custom'>('endpoint');
   const [csvSectionOpen, setCsvSectionOpen] = useState(false);
+  const rootRef = React.useRef<HTMLDivElement>(null);
+  const contentRef = React.useRef<HTMLDivElement>(null);
+  const innerContentRef = React.useRef<HTMLDivElement>(null);
+  const headerRef = React.useRef<HTMLDivElement>(null);
+  const footerRef = React.useRef<HTMLDivElement>(null);
+  const [contentMaxHeight, setContentMaxHeight] = useState<number | undefined>(undefined);
 
   const { endpoints, isLoading: endpointsLoading } = useEndpoints(projectId);
 
@@ -67,6 +72,39 @@ export function StepEditor({ step, onClose, onSave, projectId }: Props) {
       }
     }
   }, [step]);
+
+  useLayoutEffect(() => {
+    if (!rootRef.current || !headerRef.current || !footerRef.current) return;
+    
+    const updateMaxHeight = () => {
+      if (!rootRef.current || !headerRef.current || !footerRef.current) return;
+      
+      const rootEl = rootRef.current;
+      const headerEl = headerRef.current;
+      const footerEl = footerRef.current;
+      
+      const rootRect = rootEl.getBoundingClientRect();
+      const headerRect = headerEl.getBoundingClientRect();
+      const footerRect = footerEl.getBoundingClientRect();
+      
+      const calculatedMaxHeight = rootRect.height - headerRect.height - footerRect.height;
+      setContentMaxHeight(calculatedMaxHeight);
+    };
+    
+    updateMaxHeight();
+    
+    const resizeObserver = new ResizeObserver(() => {
+      updateMaxHeight();
+    });
+    
+    if (rootRef.current) {
+      resizeObserver.observe(rootRef.current);
+    }
+    
+    return () => {
+      resizeObserver.disconnect();
+    };
+  }, [step, csvSectionOpen]);
 
   const handleSave = async () => {
     setIsSaving(true);
@@ -657,9 +695,9 @@ user2@test.com,User 2,pass456`}
   };
 
   return (
-    <div className="h-full flex flex-col">
+    <div ref={rootRef} className="h-full flex flex-col overflow-hidden">
       {/* Header */}
-      <div className="px-4 py-3 border-b border-slate-200 bg-white flex items-center justify-between">
+      <div ref={headerRef} className="px-4 py-3 border-b border-slate-200 bg-white flex items-center justify-between flex-shrink-0">
         <h4 className="font-medium text-slate-900">Edit Step</h4>
         <Button variant="ghost" size="icon" onClick={onClose}>
           <X className="w-4 h-4" />
@@ -667,8 +705,12 @@ user2@test.com,User 2,pass456`}
       </div>
 
       {/* Content */}
-      <ScrollArea className="flex-1">
-        <div className="p-4 space-y-4">
+      <div 
+        ref={contentRef} 
+        className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden [&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar]:h-2 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-slate-300 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb:hover]:bg-slate-400"
+        style={contentMaxHeight !== undefined ? { maxHeight: `${contentMaxHeight}px` } : undefined}
+      >
+        <div ref={innerContentRef} className="p-4 space-y-4">
           {/* Step Name */}
           <div>
             <label className="text-xs font-medium text-slate-600 mb-1 block">Step Name</label>
@@ -688,10 +730,10 @@ user2@test.com,User 2,pass456`}
           {step.stepType === 'condition' && renderConditionEditor()}
           {step.stepType === 'loop' && renderLoopEditor()}
         </div>
-      </ScrollArea>
+      </div>
 
       {/* Footer */}
-      <div className="px-4 py-3 border-t border-slate-200 bg-white">
+      <div ref={footerRef} className="px-4 py-3 border-t border-slate-200 bg-white flex-shrink-0">
         <Button className="w-full" onClick={handleSave} disabled={isSaving}>
           <Save className="w-4 h-4 mr-1.5" />
           {isSaving ? 'Saving...' : 'Save Step'}
