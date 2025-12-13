@@ -4,6 +4,7 @@
 //! making it easy for AI tools (like Copilot) to generate test scenarios.
 
 use serde::{Deserialize, Serialize};
+use serde_json;
 use std::collections::HashMap;
 use std::path::Path;
 use tokio::process::Command;
@@ -153,7 +154,13 @@ pub struct AssertionYaml {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub path: Option<String>,
     pub operator: String,
+    #[serde(default = "default_assertion_expected")]
     pub expected: serde_json::Value,
+}
+
+/// Default value for assertion expected field when missing
+fn default_assertion_expected() -> serde_json::Value {
+    serde_json::json!(null)
 }
 
 /// YAML format for CSV configuration
@@ -337,11 +344,100 @@ pub fn project_scenarios_to_yaml_string(
 // Conversion Functions: YAML -> Internal Types
 // ============================================================================
 
+/// Normalize YAML indentation by detecting and removing inconsistent leading spaces
+/// This fixes cases where YAML has mixed indentation (e.g., first line has no spaces, others have 3 spaces)
+fn normalize_yaml_indentation(yaml_content: &str) -> String {
+    let lines: Vec<&str> = yaml_content.lines().collect();
+    if lines.is_empty() {
+        return yaml_content.to_string();
+    }
+    
+    // Find the first non-empty, non-comment line to determine expected root level indentation
+    let mut first_content_line_indent = None;
+    for line in &lines {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        let leading_spaces = line.len() - line.trim_start().len();
+        first_content_line_indent = Some(leading_spaces);
+        break;
+    }
+    
+    // If no content line found, return as-is
+    let root_indent = match first_content_line_indent {
+        Some(indent) => indent,
+        None => return yaml_content.to_string(),
+    };
+    
+    // Special case: If root level has 0 indentation but other lines have indentation,
+    // we need to find the minimum indentation from OTHER lines (not the first one) and remove it
+    if root_indent == 0 {
+        // Find the minimum indentation from lines AFTER the first content line
+        let mut found_first = false;
+        let mut min_indent = usize::MAX;
+        for line in &lines {
+            let trimmed = line.trim();
+            if trimmed.is_empty() || trimmed.starts_with('#') {
+                continue;
+            }
+            let leading_spaces = line.len() - line.trim_start().len();
+            if !found_first {
+                // Skip the first content line (it has 0 indentation)
+                found_first = true;
+                continue;
+            }
+            if leading_spaces < min_indent {
+                min_indent = leading_spaces;
+            }
+        }
+        
+        // If min_indent is still MAX or 0, no normalization needed
+        if min_indent == usize::MAX || min_indent == 0 {
+            return yaml_content.to_string();
+        }
+        
+        // Remove min_indent from all lines (root level lines with 0 spaces will stay 0, others will be reduced)
+        let normalized: Vec<String> = lines.iter().map(|line| {
+            if line.trim().is_empty() {
+                return String::new();
+            }
+            let leading_spaces = line.len() - line.trim_start().len();
+            if leading_spaces >= min_indent {
+                line[min_indent..].to_string()
+            } else {
+                // Line has less indentation than minimum (should be root level with 0), keep as-is
+                line.to_string()
+            }
+        }).collect();
+        
+        return normalized.join("\n");
+    }
+    
+    // Root level has indentation, use it as minimum and remove from all lines
+    let normalized: Vec<String> = lines.iter().map(|line| {
+        if line.trim().is_empty() {
+            return String::new();
+        }
+        let leading_spaces = line.len() - line.trim_start().len();
+        if leading_spaces >= root_indent {
+            line[root_indent..].to_string()
+        } else {
+            line.to_string()
+        }
+    }).collect();
+    
+    normalized.join("\n")
+}
+
 /// Auto-correct YAML by parsing and re-serializing with serde_yaml
 /// This normalizes indentation, spacing, and fixes minor syntax issues
 pub fn auto_correct_yaml(yaml_content: &str) -> Result<String, String> {
-    // Try to parse as generic YAML value first
-    let value: serde_yaml::Value = serde_yaml::from_str(yaml_content)
+    // First, normalize indentation to fix inconsistent leading spaces
+    let normalized = normalize_yaml_indentation(yaml_content);
+    
+    // Try to parse as generic YAML value
+    let value: serde_yaml::Value = serde_yaml::from_str(&normalized)
         .map_err(|e| format!("Failed to parse YAML for auto-correction: {}", e))?;
     
     // Re-serialize with proper formatting
@@ -455,15 +551,23 @@ fn determine_step_type_and_config(yaml: &StepYaml) -> (TestStepType, serde_json:
             assertions: yaml.assertions.as_ref().map(|assertions| {
                 assertions
                     .iter()
-                    .map(|a| Assertion {
-                        name: a.name.clone(),
-                        source: a.source.clone(),
-                        path: a.path.clone(),
-                        operator: a.operator.clone(),
-                        expected: a.expected.clone(),
-                        actual: None,
-                        passed: None,
-                        error: None,
+                    .filter_map(|a| {
+                        // Skip assertions with missing expected field (default null)
+                        // unless operator is "exists" which doesn't need expected
+                        if a.expected.is_null() && a.operator != "exists" {
+                            log::warn!("Skipping assertion '{}' due to missing 'expected' field", a.name);
+                            return None;
+                        }
+                        Some(Assertion {
+                            name: a.name.clone(),
+                            source: a.source.clone(),
+                            path: a.path.clone(),
+                            operator: a.operator.clone(),
+                            expected: a.expected.clone(),
+                            actual: None,
+                            passed: None,
+                            error: None,
+                        })
                     })
                     .collect()
             }),
@@ -733,8 +837,38 @@ pub async fn generate_yaml_template_with_ai(
             // Try to extract YAML from the output
             match extract_yaml_from_output(&output) {
                 Some(yaml) => {
-                    log::info!("Successfully extracted YAML from Copilot output");
-                    Ok(yaml)
+                    // Check if YAML is valid before normalizing
+                    let yaml_is_valid = serde_yaml::from_str::<serde_yaml::Value>(&yaml).is_ok();
+                    
+                    // Normalize YAML if it has parse errors or to ensure consistent formatting
+                    let final_yaml = if !yaml_is_valid {
+                        // Try to auto-correct YAML with indentation issues
+                        match auto_correct_yaml(&yaml) {
+                            Ok(corrected) => {
+                                log::info!("Successfully auto-corrected YAML from Copilot output");
+                                corrected
+                            },
+                            Err(e) => {
+                                log::warn!("Failed to auto-correct YAML: {}. Returning original.", e);
+                                yaml
+                            }
+                        }
+                    } else {
+                        // Even if valid, normalize for consistent formatting
+                        match auto_correct_yaml(&yaml) {
+                            Ok(corrected) => {
+                                log::info!("Normalized YAML formatting for consistency");
+                                corrected
+                            },
+                            Err(_) => {
+                                log::warn!("Failed to normalize YAML, using original");
+                                yaml
+                            }
+                        }
+                    };
+                    
+                    log::info!("Successfully extracted and normalized YAML from Copilot output");
+                    Ok(final_yaml)
                 },
                 None => {
                     log::warn!("Could not extract YAML using extract_yaml_from_output, trying fallback strategies");
