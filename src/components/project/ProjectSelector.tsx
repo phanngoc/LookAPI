@@ -52,7 +52,7 @@ export function ProjectSelector() {
         // Check if project already exists
         const existing = projects.find(p => p.path === path);
         if (existing) {
-          selectProject(existing);
+          await selectProject(existing);
           toast({
             title: 'Project selected',
             description: `Switched to ${existing.name}`,
@@ -188,8 +188,8 @@ export function ProjectSelector() {
                     'flex items-center justify-between cursor-pointer py-2',
                     currentProject?.id === project.id && 'bg-blue-50'
                   )}
-                  onClick={() => {
-                    selectProject(project);
+                  onClick={async () => {
+                    await selectProject(project);
                     setIsOpen(false);
                   }}
                 >

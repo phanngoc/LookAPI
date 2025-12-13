@@ -73,6 +73,18 @@ export const tauriService = {
     return invoke('update_project_base_url', { projectId, baseUrl });
   },
 
+  async getActiveProject(): Promise<Project | null> {
+    return invoke('get_active_project');
+  },
+
+  async setActiveProject(projectId: string | null): Promise<void> {
+    return invoke('set_active_project', { projectId });
+  },
+
+  async ensureProjectExists(project: Project): Promise<void> {
+    return invoke('ensure_project_exists', { project });
+  },
+
   async getEndpointsByProject(projectId: string): Promise<APIEndpoint[]> {
     return invoke('get_endpoints_by_project', { projectId });
   },
@@ -367,6 +379,10 @@ export const tauriService = {
    */
   async saveRequestTabs(projectId: string, tabs: RequestTab[]): Promise<void> {
     return invoke('save_request_tabs', { projectId, tabs });
+  },
+
+  async saveRequestTab(projectId: string, tab: RequestTab, tabOrder: number): Promise<void> {
+    return invoke('save_request_tab', { projectId, tab, tabOrder });
   },
 
   /**

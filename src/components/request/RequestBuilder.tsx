@@ -1,4 +1,4 @@
-import { useCallback } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import { RotateCcw, FileJson, Code2, Settings2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -15,7 +15,7 @@ import { CodeEditor } from '@/components/shared/CodeEditor';
 import { ResponseViewer } from '@/components/response/ResponseViewer';
 import { ResponseSchemaViewer } from './ResponseSchemaViewer';
 import { RequestTab } from '@/types/requestTab';
-import { tauriService } from '@/services/tauri';
+import { useRequestTabsStore } from '@/stores/requestTabsStore';
 import { useEnvironment } from '@/contexts/EnvironmentContext';
 import { toast } from '@/hooks/use-toast';
 import {
@@ -26,17 +26,52 @@ import {
 
 interface RequestBuilderProps {
   tab: RequestTab;
-  onUpdate: (tabId: string, updates: Partial<RequestTab>) => void;
 }
 
-export function RequestBuilder({ tab, onUpdate }: RequestBuilderProps) {
-  const { resolveVariables, activeEnvironment } = useEnvironment();
+export function RequestBuilder({ tab }: RequestBuilderProps) {
+  const { activeEnvironment } = useEnvironment();
+  const { updateTab, executeRequest } = useRequestTabsStore();
+  const prevResponseRef = useRef(tab.response);
+  const prevTabIdRef = useRef(tab.id);
 
-  const updateTab = useCallback(
+  // Debug: Log when tab prop changes
+  useEffect(() => {
+    const tabChanged = prevTabIdRef.current !== tab.id;
+    console.log('[RequestBuilder] Tab prop received:', {
+      tabId: tab.id,
+      name: tab.name,
+      method: tab.method,
+      url: tab.url,
+      hasEndpoint: !!tab.endpoint,
+      bodyJson: tab.bodyJson?.substring(0, 50),
+      tabChanged,
+      previousTabId: prevTabIdRef.current,
+    });
+    
+    if (tabChanged) {
+      prevTabIdRef.current = tab.id;
+      // Reset response ref when tab changes
+      prevResponseRef.current = tab.response;
+    }
+  }, [tab.id, tab.name, tab.method, tab.url, tab.endpoint, tab.bodyJson, tab.response]);
+
+  // Show toast when response changes
+  useEffect(() => {
+    if (tab.response && prevResponseRef.current !== tab.response) {
+      toast({
+        title: 'Request completed',
+        description: `${tab.response.status} ${tab.response.statusText} in ${tab.response.duration}ms`,
+        variant: tab.response.status >= 200 && tab.response.status < 300 ? 'default' : 'destructive',
+      });
+    }
+    prevResponseRef.current = tab.response;
+  }, [tab.response]);
+
+  const handleUpdate = useCallback(
     (updates: Partial<RequestTab>) => {
-      onUpdate(tab.id, updates);
+      updateTab(tab.id, updates);
     },
-    [tab.id, onUpdate]
+    [tab.id, updateTab]
   );
 
   const handleReset = () => {
@@ -47,71 +82,17 @@ export function RequestBuilder({ tab, onUpdate }: RequestBuilderProps) {
       return acc;
     }, {} as Record<string, unknown>);
 
-    updateTab({
+    handleUpdate({
       bodyJson: JSON.stringify(params, null, 2),
       error: null,
     });
   };
 
   const handleExecute = async () => {
-    updateTab({ isExecuting: true, error: null });
-
     try {
-      // Parse body
-      let parameters = {};
-      if (tab.bodyJson.trim()) {
-        try {
-          parameters = JSON.parse(tab.bodyJson);
-        } catch {
-          updateTab({
-            error: 'Invalid JSON in request body',
-            isExecuting: false,
-          });
-          return;
-        }
-      }
-
-      // Parse headers
-      let headers: Record<string, string> = { 'Content-Type': 'application/json' };
-      try {
-        headers = JSON.parse(tab.headersJson);
-      } catch {
-        // Use default headers
-      }
-
-      // Resolve environment variables in URL
-      const resolvedUrl = resolveVariables(tab.url);
-
-      const request = {
-        endpoint: resolvedUrl,
-        method: tab.method,
-        parameters,
-        headers,
-      };
-
-      const result = await tauriService.executeHttpRequest(request);
-
-      // Generate curl command
-      const curl = await tauriService.generateCurlCommand(resolvedUrl, tab.method, parameters);
-
-      updateTab({
-        response: result,
-        curlCommand: curl,
-        isExecuting: false,
-        error: null,
-      });
-
-      toast({
-        title: 'Request completed',
-        description: `${result.status} ${result.statusText} in ${result.duration}ms`,
-        variant: result.status >= 200 && result.status < 300 ? 'success' : 'destructive',
-      });
+      await executeRequest(tab.id);
     } catch (err: unknown) {
       const errorMessage = err instanceof Error ? err.message : String(err);
-      updateTab({
-        error: errorMessage || 'Request failed',
-        isExecuting: false,
-      });
       toast({
         title: 'Request failed',
         description: errorMessage,
@@ -137,11 +118,11 @@ export function RequestBuilder({ tab, onUpdate }: RequestBuilderProps) {
       const content = JSON.stringify(tab.response.data, null, 2);
 
       try {
+        const { tauriService } = await import('@/services/tauri');
         await tauriService.exportResponse(filename, content);
         toast({
           title: 'Exported!',
           description: `Response saved to ${filename}`,
-          variant: 'success',
         });
       } catch {
         toast({
@@ -182,10 +163,11 @@ export function RequestBuilder({ tab, onUpdate }: RequestBuilderProps) {
 
       {/* URL Bar */}
       <UrlBar
+        key={`${tab.id}-urlbar`}
         method={tab.method}
         url={tab.url}
-        onMethodChange={(method) => updateTab({ method })}
-        onUrlChange={(url) => updateTab({ url })}
+        onMethodChange={(method) => handleUpdate({ method })}
+        onUrlChange={(url) => handleUpdate({ url })}
         onExecute={handleExecute}
         isExecuting={tab.isExecuting}
         disabled={!!tab.error}
@@ -198,8 +180,9 @@ export function RequestBuilder({ tab, onUpdate }: RequestBuilderProps) {
           <div className="h-full flex flex-col bg-white border-r border-slate-200">
             {/* Request Tabs */}
             <Tabs
+              key={`${tab.id}-tabs`}
               value={tab.activeTab}
-              onValueChange={(value) => updateTab({ activeTab: value as 'body' | 'headers' | 'response-schema' })}
+              onValueChange={(value) => handleUpdate({ activeTab: value as 'body' | 'headers' | 'response-schema' })}
               className="flex-1 flex flex-col"
             >
               <div className="flex items-center justify-between px-4 py-2 border-b border-slate-200">
@@ -263,8 +246,9 @@ export function RequestBuilder({ tab, onUpdate }: RequestBuilderProps) {
               <TabsContent value="body" className="flex-1 m-0 p-0">
                 <div className="h-full p-4">
                   <CodeEditor
+                    key={`${tab.id}-body`}
                     value={tab.bodyJson}
-                    onChange={(value) => updateTab({ bodyJson: value })}
+                    onChange={(value) => handleUpdate({ bodyJson: value })}
                     language="json"
                     height="100%"
                     className="h-full"
@@ -280,8 +264,9 @@ export function RequestBuilder({ tab, onUpdate }: RequestBuilderProps) {
               <TabsContent value="headers" className="flex-1 m-0 p-0">
                 <div className="h-full p-4">
                   <CodeEditor
+                    key={`${tab.id}-headers`}
                     value={tab.headersJson}
-                    onChange={(value) => updateTab({ headersJson: value })}
+                    onChange={(value) => handleUpdate({ headersJson: value })}
                     language="json"
                     height="100%"
                     className="h-full"
@@ -333,4 +318,3 @@ export function RequestBuilder({ tab, onUpdate }: RequestBuilderProps) {
     </div>
   );
 }
-

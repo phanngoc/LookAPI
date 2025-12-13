@@ -45,6 +45,9 @@ pub fn run() {
             commands::get_all_projects,
             commands::delete_project,
             commands::update_project_base_url,
+            commands::get_active_project,
+            commands::set_active_project,
+            commands::ensure_project_exists,
             commands::get_endpoints_by_project,
             // Security testing commands
             commands::create_security_test_case,
@@ -91,6 +94,7 @@ pub fn run() {
             commands::get_performance_test_run,
             // Request tabs commands
             commands::save_request_tabs,
+            commands::save_request_tab,
             commands::get_request_tabs,
             commands::save_request_tab_state,
             commands::get_request_tab_state,

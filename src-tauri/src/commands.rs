@@ -152,6 +152,30 @@ pub async fn update_project_base_url(project_id: String, base_url: Option<String
 }
 
 #[tauri::command]
+pub async fn get_active_project() -> Result<Option<Project>, String> {
+    database::get_active_project()
+}
+
+#[tauri::command]
+pub async fn set_active_project(project_id: Option<String>) -> Result<(), String> {
+    database::set_active_project(project_id.as_deref())
+}
+
+#[tauri::command]
+pub async fn ensure_project_exists(project: Project) -> Result<(), String> {
+    // Check if project exists
+    match database::get_project(&project.id)? {
+        Some(_) => Ok(()), // Project already exists
+        None => {
+            // Project doesn't exist, save it
+            database::save_project(project)
+                .map_err(|e| format!("Failed to save project: {}", e))?;
+            Ok(())
+        }
+    }
+}
+
+#[tauri::command]
 pub async fn get_endpoints_by_project(project_id: String) -> Result<Vec<ApiEndpoint>, String> {
     database::get_endpoints_by_project(project_id)
 }
@@ -1026,6 +1050,15 @@ pub async fn save_request_tabs(
     tabs: Vec<RequestTab>,
 ) -> Result<(), String> {
     database::save_request_tabs(&project_id, tabs)
+}
+
+#[tauri::command]
+pub async fn save_request_tab(
+    project_id: String,
+    tab: RequestTab,
+    tab_order: i32,
+) -> Result<(), String> {
+    database::save_single_request_tab(&project_id, &tab, tab_order)
 }
 
 #[tauri::command]

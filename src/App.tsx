@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react';
+import { useState } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Header } from '@/components/layout/Header';
 import { PrimaryNavigation, FeatureType } from '@/components/layout/PrimaryNavigation';
@@ -12,6 +12,7 @@ import { Toaster } from '@/components/ui/toaster';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { APIEndpoint } from '@/types/api';
 import { TestScenario } from '@/types/scenario';
+import { useRequestTabsStore } from '@/stores/requestTabsStore';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -26,9 +27,9 @@ const queryClient = new QueryClient({
 function AppContent() {
   const [activeFeature, setActiveFeature] = useState<FeatureType | null>(null);
   const [selectedScenario, setSelectedScenario] = useState<TestScenario | null>(null);
-  const [activeEndpointId, setActiveEndpointId] = useState<string | null>(null);
+  const [activeEndpointId, setActiveEndpointId] = useState<string | undefined>(undefined);
   const { currentProject } = useProject();
-  const openTabRef = useRef<((endpoint: APIEndpoint | null) => void) | null>(null);
+  const { openTab } = useRequestTabsStore();
 
   const handleSelectFeature = (feature: FeatureType) => {
     setActiveFeature(feature);
@@ -41,13 +42,8 @@ function AppContent() {
     if (activeFeature !== 'api') {
       setActiveFeature('api');
     }
-    // Open tab via RequestTabManager
-    if (openTabRef.current) {
-      openTabRef.current(endpoint);
-    } else {
-      // Fallback: store in window temporarily
-      (window as any).__pendingEndpoint = endpoint;
-    }
+    // Open tab via store
+    openTab(endpoint);
   };
 
   const handleSelectScenario = (scenario: TestScenario | null) => {
@@ -91,14 +87,6 @@ function AppContent() {
 
           {activeFeature === 'api' && (
             <RequestTabManager
-              onOpenEndpoint={(openTab) => {
-                openTabRef.current = openTab;
-                // Handle any pending endpoint
-                if ((window as any).__pendingEndpoint) {
-                  openTab((window as any).__pendingEndpoint);
-                  delete (window as any).__pendingEndpoint;
-                }
-              }}
               onActiveEndpointChange={setActiveEndpointId}
             />
           )}

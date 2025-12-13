@@ -1,0 +1,40 @@
+---
+alwaysApply: true
+---
+
+# Plan Generation với Mermaid Flowchart
+
+Khi tạo plan hoặc phân tích task, **luôn luôn bao gồm Mermaid flowchart** để visualize cấu trúc plan. Điều này giúp hiểu nhanh workflow, dependencies và thứ tự thực thi.
+
+## Yêu cầu:
+- Sử dụng Mermaid syntax cho flowchart (```mermaid ... ```)
+- Bao gồm tất cả các bước chính và điểm quyết định
+- Hiển thị dependencies và relationships giữa các tasks
+- Sử dụng labels rõ ràng, mô tả cho các nodes
+- Nhóm các tasks liên quan khi phù hợp
+
+## Format ví dụ:
+Khi cung cấp plan, cấu trúc như sau:
+1. Tóm tắt ngắn gọn
+2. Mermaid flowchart visualization
+3. Chi tiết breakdown từng task
+
+Điều này đảm bảo plans vừa có visualization vừa có chi tiết, giúp dễ hiểu và theo dõi hơn.
+
+## Ví dụ Mermaid Flowchart:
+
+```mermaid
+flowchart TD
+    A[Start: Analyze Requirements] --> B{Task Complexity?}
+    B -->|Simple| C[Single Step Implementation]
+    B -->|Complex| D[Break into Subtasks]
+    D --> E[Create Todo List]
+    E --> F[Implement Step 1]
+    F --> G[Implement Step 2]
+    G --> H[Testing]
+    H --> I{All Tests Pass?}
+    I -->|No| J[Fix Issues]
+    J --> H
+    I -->|Yes| K[Complete]
+    C --> K
+```

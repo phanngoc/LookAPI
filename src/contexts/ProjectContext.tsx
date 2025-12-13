@@ -9,18 +9,17 @@ interface ProjectContextType {
   isLoading: boolean;
   isScanning: boolean;
   error: string | null;
-  selectProject: (project: Project | null) => void;
+  selectProject: (project: Project | null) => Promise<void>;
   openFolder: () => Promise<string | null>;
   createProject: (path: string) => Promise<Project>;
   deleteProject: (projectId: string) => Promise<void>;
   scanProject: () => Promise<APIEndpoint[]>;
   refreshProjects: () => Promise<void>;
   updateProjectBaseUrl: (projectId: string, baseUrl: string | null) => Promise<void>;
+  ensureProjectExists: (project: Project) => Promise<void>;
 }
 
 const ProjectContext = createContext<ProjectContextType | undefined>(undefined);
-
-const ACTIVE_PROJECT_KEY = 'api-tester-active-project';
 
 export function ProjectProvider({ children }: { children: ReactNode }) {
   const [projects, setProjects] = useState<Project[]>([]);
@@ -35,39 +34,33 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
     loadProjects();
   }, []);
 
-  // Restore active project from localStorage or auto-select first project
-  useEffect(() => {
-    if (projects.length === 0) return;
-    
-    const storedProjectId = localStorage.getItem(ACTIVE_PROJECT_KEY);
-    if (storedProjectId) {
-      const project = projects.find(p => p.id === storedProjectId);
-      if (project) {
-        setCurrentProject(project);
-        return;
-      }
-    }
-    
-    // Auto-select first project if no stored project or stored project doesn't exist
-    // Only set if currentProject is null to avoid overwriting user selection
-    setCurrentProject(prev => prev || projects[0] || null);
-  }, [projects]);
-
-  // Persist active project to localStorage
-  useEffect(() => {
-    if (currentProject) {
-      localStorage.setItem(ACTIVE_PROJECT_KEY, currentProject.id);
-    } else {
-      localStorage.removeItem(ACTIVE_PROJECT_KEY);
-    }
-  }, [currentProject]);
-
   const loadProjects = async () => {
     try {
       setIsLoading(true);
       setError(null);
       const loadedProjects = await tauriService.getAllProjects();
       setProjects(loadedProjects);
+      
+      // Load active project from SQLite
+      try {
+        const activeProject = await tauriService.getActiveProject();
+        if (activeProject) {
+          // Verify project exists in loaded projects list
+          const project = loadedProjects.find(p => p.id === activeProject.id);
+          if (project) {
+            setCurrentProject(project);
+            return;
+          }
+        }
+      } catch (err) {
+        console.warn('Failed to load active project from database:', err);
+      }
+      
+      // Auto-select first project if no active project or active project doesn't exist
+      // Only set if currentProject is null to avoid overwriting user selection
+      if (loadedProjects.length > 0 && !currentProject) {
+        setCurrentProject(loadedProjects[0]);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load projects');
       console.error('Failed to load projects:', err);
@@ -80,8 +73,16 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
     await loadProjects();
   }, []);
 
-  const selectProject = useCallback((project: Project | null) => {
+  const selectProject = useCallback(async (project: Project | null) => {
     setCurrentProject(project);
+    
+    // Save active project to SQLite
+    try {
+      await tauriService.setActiveProject(project?.id || null);
+    } catch (err) {
+      console.error('Failed to save active project to database:', err);
+    }
+    
     // Invalidate endpoints query when project changes
     queryClient.invalidateQueries({ queryKey: ['endpoints'] });
   }, [queryClient]);
@@ -102,6 +103,14 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
       const project = await tauriService.createProject(path);
       setProjects(prev => [project, ...prev]);
       setCurrentProject(project);
+      
+      // Save active project to SQLite
+      try {
+        await tauriService.setActiveProject(project.id);
+      } catch (err) {
+        console.error('Failed to save active project to database:', err);
+      }
+      
       return project;
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : 'Failed to create project';
@@ -177,6 +186,15 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
     }
   }, [currentProject]);
 
+  const ensureProjectExists = useCallback(async (project: Project): Promise<void> => {
+    try {
+      await tauriService.ensureProjectExists(project);
+    } catch (err) {
+      console.error('Failed to ensure project exists:', err);
+      throw err;
+    }
+  }, []);
+
   return (
     <ProjectContext.Provider
       value={{
@@ -192,6 +210,7 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
         scanProject,
         refreshProjects,
         updateProjectBaseUrl,
+        ensureProjectExists,
       }}
     >
       {children}

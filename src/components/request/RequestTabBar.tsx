@@ -1,6 +1,5 @@
 import { useState, useRef } from 'react';
 import { X, Plus, Loader2, CheckCircle2 } from 'lucide-react';
-import { RequestTab } from '@/types/requestTab';
 import { MethodBadge } from '@/components/shared/MethodBadge';
 import { cn } from '@/lib/utils';
 import {
@@ -13,7 +12,6 @@ import {
   DragEndEvent,
 } from '@dnd-kit/core';
 import {
-  arrayMove,
   SortableContext,
   sortableKeyboardCoordinates,
   horizontalListSortingStrategy,
@@ -21,26 +19,19 @@ import {
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { ScrollArea } from '@/components/ui/scroll-area';
-
-interface RequestTabBarProps {
-  tabs: RequestTab[];
-  activeTabId: string | null;
-  onSelectTab: (tabId: string) => void;
-  onCloseTab: (tabId: string) => void;
-  onRenameTab: (tabId: string, newName: string) => void;
-  onReorderTabs: (fromIndex: number, toIndex: number) => void;
-  onNewTab: () => void;
-}
+import { useRequestTabsStore } from '@/stores/requestTabsStore';
 
 interface SortableTabProps {
-  tab: RequestTab;
+  tabId: string;
   isActive: boolean;
-  onSelect: () => void;
-  onClose: () => void;
-  onRename: (newName: string) => void;
 }
 
-function SortableTab({ tab, isActive, onSelect, onClose, onRename }: SortableTabProps) {
+function SortableTab({ tabId, isActive }: SortableTabProps) {
+  const { tabs, setActiveTab, closeTab, renameTab } = useRequestTabsStore();
+  const tab = tabs.find((t) => t.id === tabId);
+  
+  if (!tab) return null;
+
   const [isRenaming, setIsRenaming] = useState(false);
   const [renameValue, setRenameValue] = useState(tab.name);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -68,7 +59,7 @@ function SortableTab({ tab, isActive, onSelect, onClose, onRename }: SortableTab
 
   const handleRenameSubmit = () => {
     if (renameValue.trim()) {
-      onRename(renameValue.trim());
+      renameTab(tab.id, renameValue.trim());
     } else {
       setRenameValue(tab.name);
     }
@@ -84,6 +75,13 @@ function SortableTab({ tab, isActive, onSelect, onClose, onRename }: SortableTab
     }
   };
 
+  const handleClick = () => {
+    // Only set active tab if not already active
+    if (!isActive) {
+      setActiveTab(tab.id);
+    }
+  };
+
   return (
     <div
       ref={setNodeRef}
@@ -96,7 +94,7 @@ function SortableTab({ tab, isActive, onSelect, onClose, onRename }: SortableTab
         isActive && 'bg-slate-50 border-b-2 border-b-blue-600',
         isDragging && 'z-50'
       )}
-      onClick={onSelect}
+      onClick={handleClick}
       onDoubleClick={handleDoubleClick}
     >
       {tab.endpoint && (
@@ -137,7 +135,7 @@ function SortableTab({ tab, isActive, onSelect, onClose, onRename }: SortableTab
         <button
           onClick={(e) => {
             e.stopPropagation();
-            onClose();
+            closeTab(tab.id);
           }}
           onPointerDown={(e) => {
             e.stopPropagation();
@@ -154,17 +152,14 @@ function SortableTab({ tab, isActive, onSelect, onClose, onRename }: SortableTab
   );
 }
 
-export function RequestTabBar({
-  tabs,
-  activeTabId,
-  onSelectTab,
-  onCloseTab,
-  onRenameTab,
-  onReorderTabs,
-  onNewTab,
-}: RequestTabBarProps) {
+export function RequestTabBar() {
+  const { tabs, activeTabId, openTab, reorderTabs } = useRequestTabsStore();
   const sensors = useSensors(
-    useSensor(PointerSensor),
+    useSensor(PointerSensor, {
+      activationConstraint: {
+        distance: 8, // Only activate drag after 8px of movement
+      },
+    }),
     useSensor(KeyboardSensor, {
       coordinateGetter: sortableKeyboardCoordinates,
     })
@@ -176,7 +171,7 @@ export function RequestTabBar({
     if (over && active.id !== over.id) {
       const oldIndex = tabs.findIndex((tab) => tab.id === active.id);
       const newIndex = tabs.findIndex((tab) => tab.id === over.id);
-      onReorderTabs(oldIndex, newIndex);
+      reorderTabs(oldIndex, newIndex);
     }
   };
 
@@ -193,11 +188,8 @@ export function RequestTabBar({
               {tabs.map((tab) => (
                 <SortableTab
                   key={tab.id}
-                  tab={tab}
+                  tabId={tab.id}
                   isActive={tab.id === activeTabId}
-                  onSelect={() => onSelectTab(tab.id)}
-                  onClose={() => onCloseTab(tab.id)}
-                  onRename={(newName) => onRenameTab(tab.id, newName)}
                 />
               ))}
             </div>
@@ -206,7 +198,7 @@ export function RequestTabBar({
       </DndContext>
 
       <button
-        onClick={onNewTab}
+        onClick={() => openTab(null)}
         className="px-3 py-2 border-l border-slate-200 hover:bg-slate-50 transition-colors shrink-0"
         title="New Request (Cmd+T)"
       >

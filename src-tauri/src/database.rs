@@ -245,6 +245,15 @@ pub fn init_database() -> Result<()> {
         [],
     )?;
 
+    // App state table - stores application-level state like active project
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS app_state (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        )",
+        [],
+    )?;
+
     Ok(())
 }
 
@@ -1543,6 +1552,97 @@ pub fn save_request_tabs(project_id: &str, tabs: Vec<crate::types::RequestTab>) 
     Ok(())
 }
 
+// Save a single request tab
+pub fn save_single_request_tab(
+    project_id: &str,
+    tab: &crate::types::RequestTab,
+    tab_order: i32,
+) -> Result<(), String> {
+    let mut conn = Connection::open(get_db_path())
+        .map_err(|e| format!("DB error: {}", e))?;
+
+    // Validate project exists
+    let project_exists: bool = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM projects WHERE id = ?)",
+        rusqlite::params![project_id],
+        |row| row.get(0),
+    )
+    .map_err(|e| format!("Query error: {}", e))?;
+
+    if !project_exists {
+        return Err(format!("Project with id '{}' does not exist", project_id));
+    }
+
+    // Start transaction
+    let tx = conn.transaction()
+        .map_err(|e| format!("Transaction error: {}", e))?;
+
+    let endpoint_id = tab.endpoint.as_ref().map(|e| e.id.clone());
+    let endpoint_json = serde_json::to_string(&tab.endpoint)
+        .map_err(|e| format!("Serialization error: {}", e))?;
+
+    // Check if tab exists
+    let tab_exists: bool = tx.query_row(
+        "SELECT EXISTS(SELECT 1 FROM request_tabs WHERE id = ? AND project_id = ?)",
+        rusqlite::params![tab.id, project_id],
+        |row| row.get(0),
+    )
+    .map_err(|e| format!("Query error: {}", e))?;
+
+    if tab_exists {
+        // UPDATE existing tab
+        tx.execute(
+            "UPDATE request_tabs SET
+             endpoint_id = ?, endpoint_json = ?, method = ?, url = ?, body_json = ?,
+             headers_json = ?, active_tab = ?, name = ?, tab_order = ?, updated_at = ?
+             WHERE id = ? AND project_id = ?",
+            rusqlite::params![
+                endpoint_id,
+                endpoint_json,
+                tab.method,
+                tab.url,
+                tab.body_json,
+                tab.headers_json,
+                tab.active_tab,
+                tab.name,
+                tab_order,
+                tab.updated_at,
+                tab.id,
+                project_id
+            ],
+        )
+        .map_err(|e| format!("Update error: {}", e))?;
+    } else {
+        // INSERT new tab
+        tx.execute(
+            "INSERT INTO request_tabs 
+            (id, project_id, endpoint_id, endpoint_json, method, url, body_json, headers_json, active_tab, name, tab_order, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            rusqlite::params![
+                tab.id,
+                project_id,
+                endpoint_id,
+                endpoint_json,
+                tab.method,
+                tab.url,
+                tab.body_json,
+                tab.headers_json,
+                tab.active_tab,
+                tab.name,
+                tab_order,
+                tab.created_at,
+                tab.updated_at
+            ],
+        )
+        .map_err(|e| format!("Insert error: {}", e))?;
+    }
+
+    tx.commit()
+        .map_err(|e| format!("Commit error: {}", e))?;
+
+    Ok(())
+}
+
 pub fn get_request_tabs(project_id: &str) -> Result<Vec<crate::types::RequestTab>, String> {
     let conn = Connection::open(get_db_path())
         .map_err(|e| format!("DB error: {}", e))?;
@@ -1668,4 +1768,58 @@ pub fn update_request_tab_order(project_id: &str, tab_orders: Vec<(String, i32)>
         .map_err(|e| format!("Commit error: {}", e))?;
 
     Ok(())
+}
+
+// App state functions
+pub fn get_app_state(key: &str) -> Result<Option<String>, String> {
+    let conn = Connection::open(get_db_path())
+        .map_err(|e| format!("DB error: {}", e))?;
+
+    let mut stmt = conn.prepare("SELECT value FROM app_state WHERE key = ?")
+        .map_err(|e| format!("Prepare error: {}", e))?;
+
+    let result = stmt.query_row([key], |row| {
+        Ok(row.get::<_, String>(0)?)
+    });
+
+    match result {
+        Ok(value) => Ok(Some(value)),
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+        Err(e) => Err(format!("Query error: {}", e)),
+    }
+}
+
+pub fn set_app_state(key: &str, value: &str) -> Result<(), String> {
+    let conn = Connection::open(get_db_path())
+        .map_err(|e| format!("DB error: {}", e))?;
+
+    conn.execute(
+        "INSERT OR REPLACE INTO app_state (key, value) VALUES (?, ?)",
+        rusqlite::params![key, value],
+    )
+    .map_err(|e| format!("Insert error: {}", e))?;
+
+    Ok(())
+}
+
+pub fn get_active_project() -> Result<Option<Project>, String> {
+    let active_project_id = match get_app_state("active_project_id")? {
+        Some(id) => id,
+        None => return Ok(None),
+    };
+
+    get_project(&active_project_id)
+}
+
+pub fn set_active_project(project_id: Option<&str>) -> Result<(), String> {
+    match project_id {
+        Some(id) => set_app_state("active_project_id", id),
+        None => {
+            let conn = Connection::open(get_db_path())
+                .map_err(|e| format!("DB error: {}", e))?;
+            conn.execute("DELETE FROM app_state WHERE key = ?", rusqlite::params!["active_project_id"])
+                .map_err(|e| format!("Delete error: {}", e))?;
+            Ok(())
+        }
+    }
 }
