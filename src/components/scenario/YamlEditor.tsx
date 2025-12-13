@@ -95,7 +95,8 @@ export function YamlEditor({
       setPreview(result);
     } catch (e) {
       setIsValid(false);
-      setError(e instanceof Error ? e.message : String(e));
+      const errorMessage = e instanceof Error ? e.message : String(e);
+      setError(errorMessage);
       setPreview(null);
     } finally {
       setIsValidating(false);
